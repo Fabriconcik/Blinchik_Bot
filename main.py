@@ -1,3 +1,5 @@
+print("hello world")
+
 import asyncio
 import random
 import time
