@@ -1,5 +1,5 @@
-regex~=2024.11.6
-aiogram~=3.20.0.post0
-aiohttp~=3.11.18
-openai~=1.78.1
-python-dotenv~=1.1.0
+regex==2024.11.6
+aiogram==3.20.0.post0
+aiohttp==3.11.18
+openai==1.78.1
+python-dotenv==1.1.0
