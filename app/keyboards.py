@@ -23,9 +23,14 @@ theme = InlineKeyboardMarkup(inline_keyboard=[
 
 #True or Fake
 
-answer = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text='Правда'), KeyboardButton(text='Ложь')]
-], resize_keyboard=True)
+# answer = ReplyKeyboardMarkup(keyboard=[
+#     [KeyboardButton(text='Правда'), KeyboardButton(text='Ложь')]
+# ], resize_keyboard=True)
+
+answer = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text='Правда', callback_data='true_answer'),
+     InlineKeyboardButton(text='Ложь', callback_data='false_answer')]
+])
 
 #Random Court
 

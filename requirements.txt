@@ -3,3 +3,4 @@ aiogram==3.20.0.post0
 aiohttp==3.11.18
 openai==1.78.1
 python-dotenv==1.1.0
+requests==2.32.3

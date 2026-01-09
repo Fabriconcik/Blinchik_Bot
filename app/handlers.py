@@ -9,6 +9,8 @@ from pyexpat.errors import messages
 
 router = Router()
 
+import main
+
 game = None
 voted = {}
 
@@ -49,7 +51,14 @@ async def join_lobby(message: Message):
         return
 
     if message.from_user in main.lobby.participants:
-        await message.answer('Ты уже в лобби')
+        await message.answer(f'❗{message.from_user.full_name}, ты уже в лобби')
+        return
+
+    if not (
+            main.survivors_game is None and main.true_or_fake_game is None and main.writers_game is None
+            and main.emoji_battle_game is None and main.random_court_game is None and main.fun_room_game is None and
+            main.neuro_auction_game is None):
+        await message.answer(f"❗{message.from_user.full_name}, дождись окончания игры")
         return
 
     main.lobby.participants.append(message.from_user)
@@ -158,15 +167,66 @@ async def choose_game(message: Message):
             await main.neuro_auction_game.start_round()
 
 
+@router.message(Command('delete_lobby'))
+async def delete_lobby(message: Message):
+    import main
+    global game
+    global voted
+    global game_states
+    global true_or_fake_states
+    global writers_states
+    global emoji_battle_states
+    global random_court_states
+    global fun_room_states
+    global neuro_auction_states
+    global game_states
+    global game
+
+    if main.lobby is None:
+        await message.answer("❗В этом чате нет созданных лобби")
+        return
+
+    if message.from_user != main.lobby.leader:
+        await message.answer(f"❗{message.from_user.full_name}, Вы не лидер лобби")
+        return
+
+    leader = main.lobby.leader.full_name
+    main.lobby = None
+    main.survivors_game = None
+    main.true_or_fake_game = None
+    main.writers_game = None
+    main.emoji_battle_game = None
+    main.random_court_game = None
+    main.fun_room_game = None
+    main.neuro_auction_game = None
+    true_or_fake_states = ''
+    writers_states = ''
+    emoji_battle_states = ''
+    random_court_states = ''
+    fun_room_states = ''
+    neuro_auction_states = ''
+    game_states = ''
+    game = ''
+    voted = {}
+    await message.answer(f"✅Лидер {leader} расформировал лобби")
+
+
 #Survivors
 
 @router.callback_query(F.data == 'surv_first_theme')
 async def first_theme(callback: Message):
     import main
     global survivors_states
+
+    if main.survivors_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if callback.from_user.id != main.survivors_game.player_turn.id:
         await callback.answer('❗Не ты выбираешь тему')
         return
+
+    await callback.answer('✅ Тема выбрана')
 
     main.survivors_game.current_theme = main.survivors_game.current_themes[0]
     await main.survivors_game.confirm_theme()
@@ -177,9 +237,16 @@ async def first_theme(callback: Message):
 async def second_theme(callback: Message):
     import main
     global survivors_states
+
+    if main.survivors_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if callback.from_user != main.survivors_game.player_turn:
         await callback.answer('❗Не ты выбираешь тему')
         return
+
+    await callback.answer('✅ Тема выбрана')
 
     main.survivors_game.current_theme = main.survivors_game.current_themes[1]
     await main.survivors_game.confirm_theme()
@@ -190,9 +257,16 @@ async def second_theme(callback: Message):
 async def third_theme(callback: Message):
     import main
     global survivors_states
+
+    if main.survivors_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if callback.from_user != main.survivors_game.player_turn:
         await callback.answer('❗Не ты выбираешь тему')
         return
+
+    await callback.answer('✅ Тема выбрана')
 
     main.survivors_game.current_theme = main.survivors_game.current_themes[2]
     await main.survivors_game.confirm_theme()
@@ -203,6 +277,11 @@ async def third_theme(callback: Message):
 async def own_theme(callback: Message):
     import main
     global survivors_states
+
+    if main.survivors_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if callback.from_user != main.survivors_game.player_turn:
         await callback.answer('❗Не ты выбираешь тему')
         return
@@ -245,6 +324,9 @@ async def receive_strategy(message: Message):
     if message.from_user.id in main.survivors_game.strategies:
         return
 
+    if message.text is None:
+        return
+
     main.survivors_game.strategies[message.from_user.id] = message.text
     await main.survivors_game.update_states()
     try:
@@ -278,36 +360,74 @@ async def receive_thematic(message: Message):
         await message.delete()
     except Exception as e:
         print(f"Ошибка при удалении сообщения: {e}")
-    await message.answer(f"✅ Выбрана тематика <b>{message.text}</b>\n\nФормируем факты...")
+    await message.answer(f"✅ Выбрана тематика <b>{message.text}</b>\n\n🕑Формируем факты...")
+    await main.true_or_fake_game.forming_facts()
     await main.true_or_fake_game.write_fact()
 
 
-async def receive_choice(message: Message):
+# async def receive_choice(message: Message):
+#     import main
+#     global true_or_fake_states
+#
+#     if message.chat.id != main.true_or_fake_game.chat_id:
+#         return
+#
+#     if message.from_user not in main.true_or_fake_game.players:
+#         return
+#
+#     if message.from_user.id in main.true_or_fake_game.votes:
+#         await message.answer('❗Ты уже проголосовал')
+#         return
+#
+#     if message.text not in ['Правда', 'Ложь']:
+#         await message.answer('❗Некорректный ответ')
+#         print(message.text)
+#         return
+#
+#     main.true_or_fake_game.votes[message.from_user.id] = True if message.text.lower() == 'правда' else False
+#     await message.delete()
+#     await message.answer(f'✅ {message.from_user.first_name} проголосовал')
+#     if len(main.true_or_fake_game.votes) == len(main.true_or_fake_game.players):
+#         await message.answer('👥✅ Все проголосовали, начинаем проверку!')
+#         true_or_fake_states = None
+#         await main.true_or_fake_game.evaluate_votes()
+
+async def answer(callback: Message, true_or_fake):
     import main
     global true_or_fake_states
 
-    if message.chat.id != main.true_or_fake_game.chat_id:
+    if main.true_or_fake_game is None:
+        await callback.answer("❗Игра неактивна")
         return
 
-    if message.from_user not in main.true_or_fake_game.players:
+    if callback.from_user not in main.true_or_fake_game.players:
+        await callback.answer('❗Ты не в лобби')
         return
 
-    if message.from_user.id in main.true_or_fake_game.votes:
-        await message.answer('❗Ты уже проголосовал')
+    if callback.from_user.id in main.true_or_fake_game.votes:
+        await callback.answer('❗Ты уже проголосовал')
         return
 
-    if message.text not in ['Правда', 'Ложь']:
-        await message.answer('❗Некорректный ответ')
-        print(message.text)
-        return
+    await callback.answer('✅ Ты проголосовал')
 
-    main.true_or_fake_game.votes[message.from_user.id] = True if message.text.lower() == 'правда' else False
-    await message.delete()
-    await message.answer(f'✅ {message.from_user.first_name} проголосовал за \'{message.text}\'')
+    main.true_or_fake_game.votes[callback.from_user.id] = true_or_fake
+    await main.bot.send_message(chat_id=main.lobby.chat_id,
+                                text=f'✅ {callback.from_user.first_name} проголосовал')
     if len(main.true_or_fake_game.votes) == len(main.true_or_fake_game.players):
-        await message.answer('👥✅ Все проголосовали, начинаем проверку!')
+        await main.bot.send_message(chat_id=main.lobby.chat_id,
+                                    text='👥✅ Все проголосовали, начинаем проверку!')
         true_or_fake_states = None
         await main.true_or_fake_game.evaluate_votes()
+
+
+@router.callback_query(F.data == 'true_answer')
+async def true_answer(callback: Message):
+    await answer(callback, True)
+
+
+@router.callback_query(F.data == 'false_answer')
+async def true_answer(callback: Message):
+    await answer(callback, False)
 
 
 #Writers
@@ -386,6 +506,10 @@ def is_only_emojis(text):
 async def defendant(callback: Message):
     import main
 
+    if main.random_court_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if main.random_court_game.roles["Подсудимый"] is not None:
         await callback.answer(f'❗Эта роль уже занята игроком {main.random_court_game.roles["Подсудимый"].first_name}')
         return
@@ -403,6 +527,10 @@ async def defendant(callback: Message):
 async def prosecutor(callback: Message):
     import main
 
+    if main.random_court_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
+
     if main.random_court_game.roles["Прокурор"] is not None:
         await callback.answer(f'❗Эта роль уже занята игроком {main.random_court_game.roles["Прокурор"].first_name}')
         return
@@ -419,6 +547,10 @@ async def prosecutor(callback: Message):
 @router.callback_query(F.data == 'lawyer')
 async def lawyer(callback: Message):
     import main
+
+    if main.random_court_game is None:
+        await callback.answer("❗Игра неактивна")
+        return
 
     if main.random_court_game.roles["Адвокат"] is not None:
         await callback.answer(f'❗Эта роль уже занята игроком {main.random_court_game.roles["Адвокат"].first_name}')
@@ -512,6 +644,10 @@ async def neuro_auction_giveaway(callback: Message):
         import main
         global neuro_auction_states
 
+        if main.neuro_auction_game is None:
+            await callback.answer("❗Игра неактивна")
+            return
+
         if main.neuro_auction_game.can_get_neuro is False:
             await callback.answer('❗Нейро уже забрали')
             return
@@ -533,6 +669,9 @@ async def receive_bet(message: Message):
         return
 
     if message.from_user not in main.neuro_auction_game.players:
+        return
+
+    if message.text == '':
         return
 
     try:

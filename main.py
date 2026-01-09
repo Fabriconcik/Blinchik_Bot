@@ -1,8 +1,7 @@
-print("hello world")
-
 import asyncio
 import random
 import time
+from logging import exception
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -47,16 +46,18 @@ import app.keyboards as kb
 
 load_dotenv()
 
-# BOT_TOKEN = os.getenv("BOT_TOKEN")
-# AI_TOKEN = os.getenv("AI_TOKEN")
-BOT_TOKEN='8056179054:AAG7xDPYxFsuQZ15VZwFMlQ2ozqzoW8grWY'
-AI_TOKEN='io-v2-eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJvd25lciI6ImFkNmJhNTI2LTY0NWItNDVmYi05NjYwLWU0YjBlZWNiYWM2OCIsImV4cCI6NDkxODg5Mzc2MX0.egN1W8UK7dqn55LtNhHyBwJlmH7qWJbMcSQTkXdXL0G5cJJnL7m98eAwG4Vou_78tXra_OXER7Njv3R7U6yBGQ'
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+AI_TOKEN = os.getenv("AI_TOKEN")
 
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=BOT_TOKEN,
           default=DefaultBotProperties(parse_mode='HTML'))
 dp = Dispatcher()
+
+# model_ai = 'moonshotai/Kimi-K2-Instruct-0905'
+model_ai = 'deepseek-ai/DeepSeek-V3.2'
+# model_ai = 'deepseek-ai/DeepSeek-R1-0905'
 
 with open("topics.txt", "r", encoding="utf-8") as file:
     TOPICS_DATABASE = [line.strip() for line in file if line.strip()]
@@ -160,7 +161,6 @@ class SurvivorsGame:
         self.current_themes = []
         self.player_turn = None
         self.strategies = {}
-        self.evaluated_strategies = {str(player.id): [] for player in players}
         self.theme_message_id = None
         self.time_left = 120
 
@@ -171,7 +171,6 @@ class SurvivorsGame:
         self.player_turn = None
         self.strategies = {}
         self.theme_message_id = None
-        self.evaluated_strategies = {str(player.id): [] for player in players}
 
     async def start_game(self):
         text = (
@@ -217,11 +216,13 @@ class SurvivorsGame:
             f"👥Игроков прислало стратегии: {len(self.strategies)}/{len(self.players)}\n\n"
         )
 
-        await bot.edit_message_text(
-            chat_id=self.chat_id,
-            text=text,
-            message_id=self.theme_message_id
-        )
+        await bot.delete_message(chat_id=self.chat_id,
+                                 message_id=self.theme_message_id)
+
+        msg = await bot.send_message(chat_id=self.chat_id,
+                               text=text)
+
+        self.theme_message_id = msg.message_id
 
     async def update_states(self):
         text = (
@@ -244,16 +245,37 @@ class SurvivorsGame:
         evaluated_strategies = await self.evaluate_strategies()
 
         for player in self.players:
-            result_text = (
-                f"👤 {player.full_name}\n"
-                f"📜 Стратегия: {self.strategies[player.id]}\n\n"
-                f"📖 История:\n{evaluated_strategies[str(player.id)][0]}\n\n"
-                f"🔍 Вердикт: {'❤️ Выжил' if evaluated_strategies[str(player.id)][1] else '💀 Погиб'}"
-            )
+            try:
+                result_text = (
+                    f"👤 {player.full_name}\n"
+                    f"📜 Стратегия: {self.strategies[player.id]}\n\n"
+                    f"📖 История:\n{evaluated_strategies[str(player.id)][0]}\n\n"
+                    f"🔍 Вердикт: {'❤️ Выжил' if evaluated_strategies[str(player.id)][1] else '💀 Погиб'}"
+                )
 
-            survived = True if evaluated_strategies[str(player.id)][1] else False
-            self.results[player.id].append(survived)
-            await bot.send_message(chat_id=self.chat_id, text=result_text)
+                survived = True if evaluated_strategies[str(player.id)][1] else False
+                self.results[player.id].append(survived)
+                await bot.send_message(chat_id=self.chat_id, text=result_text)
+
+                if len(self.players) > 10:
+                    await asyncio.sleep(1)
+            except Exception as e:
+                print(str(e))
+
+                print(evaluated_strategies)
+                print(str(player.id))
+                result_text = (
+                    f"👤 {player.full_name}\n"
+                    f"❗ОШИБКА ОБРАБОТКИ ОТВЕТА"
+                    f"📖 {evaluated_strategies}"
+                )
+
+                if random.randint(0, 1) == 0:
+                    survived = True
+                else:
+                    survived = False
+                self.results[player.id].append(survived)
+                await bot.send_message(chat_id=self.chat_id, text=result_text)
 
         await self.results_round()
 
@@ -323,7 +345,7 @@ class SurvivorsGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -357,8 +379,10 @@ class SurvivorsGame:
                     part_player = part.split('\n')
                     name = part_player[0].replace('Игрок:', '').strip()
                     story = part_player[1].replace('История:', '').strip()
+                    story = story.replace('история:', '').strip()
                     survived = part_player[2].replace('Вердикт:', '').strip()
-                    survived = True if 'выжил' in survived else False
+                    survived = survived.replace('вердикт:', '').strip()
+                    survived = True if 'выжил' in survived.lower() else False
                     evaluated_strategies[name] = [story, survived]
 
                 return evaluated_strategies
@@ -395,9 +419,16 @@ class SurvivorsGame:
             wins = sum(1 for result in self.results[player.id] if result)
             if wins > winner[1]:
                 winner = [player.full_name, wins]
+            elif wins == winner[1] and wins != 0:
+                winner[0] += f", {player.full_name}"
             text += f"👤 {player.full_name}: выжил {wins} раз(а) из {self.max_rounds}❤️\n"
 
-        text += f"\n🏆 Победитель: {winner[0]} с {winner[1]} выживанием(ями)!\n\n"
+        if winner[1] == 0:
+            winner[0] = "никто"
+        elif winner[0].count(",") == 0:
+            text += f"\n🏆 Победитель: {winner[0]} с {winner[1]} выживанием(ями)!\n\n"
+        else:
+            text += f"\n🏆 Победители: {winner[0]} с {winner[1]} выживанием(ями)!\n\n"
         await bot.send_message(chat_id=self.chat_id, text=text)
         survivors_game = None
 
@@ -425,7 +456,7 @@ class TrueOrFakeGame:
         text = (
             f"👋 Добро пожаловать в игру <b>Правда или Ложь</b>!\n\n"
             f"🤖 Бот будет генерировать факты, а вы должны будете угадать, правда это или ложь.\n"
-            f"💬 Напишите 'правда' или 'ложь' в ответ на сообщение, чтобы проголосовать. Удачи!"
+            f"💬 Выберите 'правда' или 'ложь' в сообщении, чтобы проголосовать. Удачи!"
         )
 
         await bot.send_message(chat_id=self.chat_id, text=text)
@@ -440,18 +471,18 @@ class TrueOrFakeGame:
             text=text,
         )
 
+    async def forming_facts(self):
+        self.facts = await self.get_facts()
+
     async def write_fact(self):
         import app.handlers as handlers
-
-        if self.facts == {}:
-            self.facts = await self.get_facts()
 
         self.current_fact, self.true_or_fake = self.facts[self.round - 1][0], self.facts[self.round - 1][1]
 
         text = (
             f"🕹️Раунд {self.round} из {self.max_rounds}\n\n"
             f"🤖 Факт: {self.current_fact}\n\n"
-            f"💬 Напишите 'правда' или 'ложь' в ответ на сообщение, чтобы проголосовать."
+            f"💬 Выберите 'правда' или 'ложь' в сообщении, чтобы проголосовать."
         )
 
         await bot.send_message(chat_id=self.chat_id,
@@ -519,7 +550,7 @@ class TrueOrFakeGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -563,8 +594,8 @@ class TrueOrFakeGame:
     async def evaluate_votes(self):
         text = f"Результаты раунда {self.round}:\n\n"
         for player in self.players:
-            text += f"⚖️ {player.full_name} проголосовал!\n"
-            self.results[player.id].append(True if self.true_or_fake else False)
+            text += f"⚖️ {player.full_name} проголосовал за {"<u>Правду</u>" if self.votes[player.id] else "<u>Ложь</u>"}!\n"
+            self.results[player.id].append(True if self.true_or_fake == self.votes[player.id] else False)
             # if self.votes[player.id]:
             #     text += f"⚖️ {player.full_name} проголосовал за <u>правду</u>!\n"
             #     self.results[player.id].append(True if self.true_or_fake else False)
@@ -591,9 +622,16 @@ class TrueOrFakeGame:
             wins = sum(1 for result in self.results[player.id] if result)
             if wins > winner[1]:
                 winner = [player.full_name, wins]
+            elif wins == winner[1] and wins != 0:
+                winner[0] += f", {player.full_name}"
             text += f"👤 {player.full_name}: отгадал {wins} раз(а) из {self.max_rounds}\n"
 
-        text += f"\n🏆 Победитель: <b>{winner[0]}</b> с {winner[1]} правильным(и) ответом(ами)!\n\n"
+        if winner[1] == 0:
+            winner[0] = "никто"
+        elif winner[0].count(",") == 0:
+            text += f"\n🏆 Победитель: <b>{winner[0]}</b> с {winner[1]} правильным(и) ответом(ами)!\n\n"
+        else:
+            text += f"\n🏆 Победители: <b>{winner[0]}</b> с {winner[1]} правильным(и) ответом(ами)!\n\n"
 
         await bot.send_message(chat_id=self.chat_id, text=text)
         true_or_fake_game = None
@@ -754,7 +792,7 @@ class WritersGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -773,7 +811,7 @@ class WritersGame:
             return text
 
         except Exception as e:
-            print(e)
+            print(str(e))
             return f"⚠️ Ошибка обработки стратегии: {str(e)}", False
 
     async def confirm_sentence(self):
@@ -812,6 +850,7 @@ class EmojiBattleGame:
         self.all_emojies = {player.full_name: "" for player in players}
         self.results = {player.id: [] for player in players}
         self.thematic = ""
+        self.thematics = []
         self.message_id = None
 
     def next_round(self):
@@ -827,11 +866,15 @@ class EmojiBattleGame:
         await bot.send_message(chat_id=self.chat_id,
                                text=text)
 
-    async def start_round(self):
-        await bot.send_message(chat_id=self.chat_id,
-                               text=f"⏱️Нейросеть придумывает тематику для раунда...")
+        text = "🕑Бот генерирует тематики для игры..."
 
-        self.thematic = await self.get_thematic()
+        await bot.send_message(chat_id=self.chat_id,
+                               text=text)
+
+        self.thematics = await self.get_thematics()
+
+    async def start_round(self):
+        self.thematic = self.thematics[self.round - 1]
 
         await self.start_timer()
 
@@ -841,7 +884,7 @@ class EmojiBattleGame:
         text = (f"🕹️Раунд {self.round} из {self.max_rounds}\n\n"
                 f"🤖 Тематика: {self.thematic}\n\n"
                 f"💬 Напишите свой набор эмодзи, наиболее подходящий к данной тематике.\n\n"
-                f"⏳У вас есть 30 секунд, чтобы придумать свой набор эмодзи и отправить его в чат!\n\n"
+                f"⏳У вас есть 45 секунд, чтобы придумать свой набор эмодзи и отправить его в чат!\n\n"
                 )
 
         msg = await bot.send_message(chat_id=self.chat_id,
@@ -849,19 +892,19 @@ class EmojiBattleGame:
         self.message_id = msg.message_id
 
         timer_msg = await bot.send_message(chat_id=self.chat_id,
-                                           text=f"⏱️Осталось: 30 секунд")
+                                           text=f"⏱️Осталось: 45 секунд")
         timer_msg_id = timer_msg.message_id
 
         handlers.emoji_battle_states = "waiting_for_emoji"
         start_time = time.time()
-        counter = 25
-        while counter > -1 and not handlers.emoji_battle_states is None:
+        counter = 45
+        while counter > 0 and not handlers.emoji_battle_states is None:
             elapsed_time = time.time() - start_time
             if elapsed_time >= 5:
+                counter -= 5
                 await bot.edit_message_text(chat_id=self.chat_id,
                                             message_id=timer_msg_id,
                                             text=f"⏱️Осталось: {counter} секунд")
-                counter -= 5
                 start_time = time.time()
             await asyncio.sleep(0.001)
 
@@ -883,7 +926,7 @@ class EmojiBattleGame:
 
         await self.evaluate_emojies()
 
-    async def get_thematic(self):
+    async def get_thematics(self):
         try:
             # prompt = (
             #     "Ты - бот, который генерирует тематику для игры 'Эмодзи Битва'. Твоя задача - придумать одну "
@@ -928,16 +971,17 @@ class EmojiBattleGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
                         "content": (
-                            "Ты - бот, который генерирует тематику для игры 'Эмодзи Битва'. Твоя задача - придумать одну "
-                            "случайную тематику, которая будет интересной, необычной, забавной или абсурдной."
-                            "Тематика не должна быть связана с чем-то конкретным, например 'поход в кино', 'прогулка "
+                            f"Ты - бот, который генерирует тематики для игры 'Эмодзи Битва'. Твоя задача - придумать {self.max_rounds} "
+                            "случайных тематик, которые будут интересными, необычными, забавными или абсурдными."
+                            "Тематики не должны быть связаны с чем-то конкретным, например 'поход в кино', 'прогулка "
                             "с собакой', 'взрывная вечеринка' и т.д. Не пиши своих рассуждений ни в каком виде и не "
-                            "выделяй текст!. Ты должен прислать только тематику - её текст (без любых эмодзи).")
+                            "выделяй текст!. Ты должен прислать только тематики - её текст (без любых эмодзи). ОБЯЗАТЕЛЬНО!"
+                            "Формат:\n[Тематика_1]\n---\n[Тематика_2]\n---\n ... \n---\n[Тематика_N]")
                     }
                 ]
             }
@@ -948,8 +992,9 @@ class EmojiBattleGame:
 
             # text = answer.split('</think>\n')[1]
             text = answer
+            thematics = text.split("\n---\n")
 
-            return text
+            return thematics
 
         except Exception as e:
             print(e)
@@ -957,6 +1002,9 @@ class EmojiBattleGame:
 
     async def evaluate_emojies(self):
         text = f"Результаты раунда {self.round}:\n\n"
+        verdicts = {}
+        if any(self.emojies.values()):
+            verdicts = await self.evaluate_emoji()
 
         for player in self.players:
             text += f"👤 {player.full_name}: "
@@ -964,7 +1012,17 @@ class EmojiBattleGame:
                 text += "❌ Не отправил набор эмодзи!\n"
                 self.results[player.id].append("0")
                 continue
-            verdict = await self.evaluate_emoji(self.emojies[player.full_name])
+
+            try:
+                verdict = verdicts[player.full_name]
+            except Exception as e:
+                print(str(e))
+                print(verdicts)
+                print(player.full_name)
+                await bot.send_message(chat_id=self.chat_id,
+                                       text=f"⚠️ Ошибка при оценивании {player.full_name}, оценка будет выставлена случайно")
+                verdict = str(random.randint(1, 10))
+
             text += verdict
             self.results[player.id].append(verdict.split('/')[0])
             text += f" - {self.emojies[player.full_name]}\n\n"
@@ -978,8 +1036,8 @@ class EmojiBattleGame:
             self.next_round()
             await self.start_round()
 
-    async def evaluate_emoji(self, emoji):
-        try:
+    async def evaluate_emoji(self):
+
             # prompt = (
             #     "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить набор эмодзи, "
             #     "который игрок отправил на определённую тематику. Оцени набор эмодзи по шкале от 1 до 10, где 1 - "
@@ -1007,43 +1065,64 @@ class EmojiBattleGame:
             #     ]
             # )
 
-            import requests
+        import requests
 
-            url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
+        text = ''
+        for player in self.players:
+            if self.emojies[player.full_name] == "":
+                continue
+            text += f"{player.full_name}: {self.emojies[player.full_name]}\n"
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {AI_TOKEN}"
-            }
+        url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
-            data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить "
-                            "набор эмодзи, который игрок отправил на определённую тематику. Оцени набор эмодзи по "
-                            "шкале от 1 до 10, где 1 - это полный провал, а 10 - это идеальный набор эмодзи. Не пиши "
-                            "своих рассуждений ни в каком виде!. Мне нужно только оценка и не выделяй текст. Твой "
-                            "ответ должен выглядеть так: '{кол-во баллов}/10'. Ты должен достаточной строго оценивать "
-                            "набор на соответвие с тематикой, но не занижай оценку, оценивай справедливо."
-                            f"Тематика раунда: '{self.thematic}'. Набор эмодзи: '{emoji}'.")
-                    }
-                ]
-            }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {AI_TOKEN}"
+        }
 
+        data = {
+            "model": model_ai,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить "
+                        "набор эмодзи, который игрок отправил на определённую тематику. Оцени набор эмодзи по "
+                        "шкале от 1 до 10, где 1 - это полный провал, а 10 - это идеальный набор эмодзи. Не пиши "
+                        "своих рассуждений ни в каком виде!. Мне нужно только оценка и не выделяй текст. Твой "
+                        "ответ должен выглядеть так: '{кол-во баллов}/10'. Ты должен достаточной строго оценивать "
+                        "набор на соответвие с тематикой, но не занижай оценку, оценивай справедливо."
+                        f"Тематика раунда: '{self.thematic}'. Набор эмодзи: '{text}'. Обязательно! Формат:\n "
+                        f"Игрок: [имя_игрока]\n[баллы]/10\n---\n.")
+                }
+            ]
+        }
+
+        parts = ''
+        player = ''
+        score = ''
+        try:
             response = requests.post(url, headers=headers, json=data)
             data = response.json()
             answer = data['choices'][0]['message']['content']
 
             # text = answer.split('</think>\n')[1]
             text = answer
-
-            return text
+            parts = text.split('\n---\n')
+            verdicts = {}
+            for part in parts:
+                part_player = part.split('\n')
+                player = part_player[0].replace("Игрок:", '').strip()
+                player = player.replace("игрок:", '').strip()
+                score = part_player[1].replace("/10", '').strip()
+                verdicts[player] = score
+            return verdicts
 
         except Exception as e:
             print(e)
+            print(parts)
+            print(player)
+            print(score)
             return f"⚠️ Ошибка обработки эмодзи: {str(e)}", False
 
     async def final_results(self):
@@ -1058,11 +1137,19 @@ class EmojiBattleGame:
             wins = sum(int(result) for result in self.results[player.id])
             if wins > winner[1]:
                 winner = [player.full_name, wins]
+            elif wins == winner[1] and wins != 0:
+                winner[0] += f", {player.full_name}"
             text += f"👤 {player.full_name}: набрал {wins} баллов из {self.max_rounds * 10}❤️\n"
 
-        text += f"\n🏆 Победитель: <b>{winner[0]}</b> с {winner[1]} баллом(ами)!\n\n"
+        if winner[1] == 0:
+            winner[0] = "никто"
+        elif winner[0].count(",") == 0:
+            text += f"\n🏆 Победитель: <b>{winner[0]}</b> с {winner[1]} баллом(ами)!\n\n"
+            text += f"История его последней битвы:\n\n"
+        else:
+            text += f"\n🏆 Победители: <b>{winner[0]}</b> с {winner[1]} баллом(ами)!\n\n"
+            text += f"История их последней битвы:\n\n"
 
-        text += f"История его последней битвы:\n\n"
         text += await self.get_story(winner[0])
 
         await bot.send_message(chat_id=self.chat_id, text=text)
@@ -1070,6 +1157,10 @@ class EmojiBattleGame:
 
     async def get_story(self, winner):
         import requests
+
+        players_emoji = ''
+        for player in self.players:
+            players_emoji += f"{player.full_name}: {self.emojies[player.full_name]}\n"
 
         url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1080,15 +1171,18 @@ class EmojiBattleGame:
 
         data = {
             # "model": "deepseek-ai/DeepSeek-R1-0528",
-            "model": "deepseek-ai/DeepSeek-V3.2",
+            "model": model_ai,
             "messages": [
                 {
                     "role": "user",
                     "content": (
-                        f"Придумай историю о битве, в которой победил игрок {winner}, основанную на наборе эмодзи, "
-                        f"что игроки использовали в игре 'Эмодзи Битва'. Если игроков несколько, то они должны "
-                        f"сражаться между собой. Не выделяй текст и не пиши размышлений!."
-                        f"Вот эмодзи всех игроков: {self.all_emojies}.")
+                        f"Придумай историю о битве, в которой победил игрок(и) {winner}, основанную на наборе эмодзи, "
+                        f"что игроки использовали в игре 'Эмодзи Битва'. Если победителей несколько, то они должны "
+                        f"сражаться вместе против остальных. Если количество победителей равно {len(self.players)} (или победитель это единственный игрок), "
+                        f"то он(и) сражается(ются) вместе с выдуманным противником. Если победитель один, то он должен "
+                        f"сражаться с остальными игроками (если такие есть). Не выделяй текст и не пиши размышлений!. Ты можешь "
+                        f"использовать только те эмодзи, что были использованы игроками в игре, причем каждый игрок "
+                        f"может использовать только свой набор эмодзи. Вот эмодзи всех игроков: {players_emoji}.")
                 }
             ]
         }
@@ -1213,7 +1307,7 @@ class RandomCourtGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -1288,7 +1382,7 @@ class RandomCourtGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -1353,7 +1447,7 @@ class FunRoomGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -1379,23 +1473,26 @@ class NeuroAuctionGame:
     def __init__(self, chat_id):
         self.chat_id = chat_id
         self.players = players
-        self.items = {player.full_name: [] for player in players}
+        self.player_items = {player.full_name: [] for player in players}
         self.current_item = None
         self.current_description = None
         self.balance = {player.full_name: 1000 for player in players}
         self.bet = ['', 0]
-        self.gift_msg_id = 0
         self.round = 1
         self.max_rounds = 3
+        self.gift_msg_id = 0
         self.can_get_neuro = True
+        self.can_send_neuro = True
         self.the_most_expensive_item = ['', '', -1]
         self.the_most_cheap_item = ['', '', 999999999]
+        self.items = []
 
     def next_round(self):
         self.round += 1
         self.current_item = None
         self.bet = ['', 0]
         self.can_get_neuro = True
+        self.can_send_neuro = True
 
     async def start_game(self):
         text = (f"🕹️Игра 'Нейро-Аукцион' начинается!\n\n"
@@ -1408,21 +1505,29 @@ class NeuroAuctionGame:
         await bot.send_message(chat_id=self.chat_id,
                                text=text)
 
+        text = "🕑Нейросеть генерирует предметы..."
+
+        await bot.send_message(chat_id=self.chat_id,
+                               text=text)
+
+        await self.get_items()
+
+
+
     async def start_round(self):
         import app.handlers as handlers
 
-        self.current_item, self.current_description = await self.get_item()
+        self.current_item, self.current_description = self.items[self.round-1][0], self.items[self.round-1][1]
 
         text = (f"🕹️Раунд {self.round} из {self.max_rounds}\n\n"
                 f"💎Предмет на аукционе: {self.current_item}\n\n"
                 f"📜Описание: {self.current_description}\n\n"
-                f"💰У вас есть 30 секунд, чтобы сделать ставку на предмет.\n\n"
+                f"💰У вас будет 30 секунд, чтобы сделать ставку на предмет.\n\n"
                 f"💬 Напишите свою ставку в нейро-рублях.")
 
         await bot.send_message(chat_id=self.chat_id,
                                text=text)
 
-        handlers.neuro_auction_states = "waiting_for_bet"
         await self.timer()
 
     async def got_neuro(self, player, count):
@@ -1434,6 +1539,34 @@ class NeuroAuctionGame:
 
     async def timer(self):
         import app.handlers as handlers
+
+        text = f"🕑У вас есть 15 секунд, чтобы оценить предмет перед началом аукциона"
+        msg = await bot.send_message(chat_id=self.chat_id,
+                                     text=text)
+        timer_msg_id = msg.message_id
+
+        start_time = time.time()
+        counter = 15
+        while counter > 0:
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= 5:
+                counter -= 5
+                text = f"🕑У вас есть {counter} секунд, чтобы оценить предмет перед началом аукциона"
+                await bot.edit_message_text(chat_id=self.chat_id,
+                                            message_id=timer_msg_id,
+                                            text=text)
+
+                start_time = time.time()
+            await asyncio.sleep(0.001)
+
+        await bot.delete_message(chat_id=self.chat_id,
+                                 message_id=timer_msg_id)
+
+        text = f"👨‍⚖️🕑Время ставок!"
+        await bot.send_message(chat_id=self.chat_id,
+                               text=text)
+
+        handlers.neuro_auction_states = "waiting_for_bet"
 
         text = f"⏱️Осталось: 30 секунд"
         msg = await bot.send_message(chat_id=self.chat_id,
@@ -1450,12 +1583,13 @@ class NeuroAuctionGame:
                                             message_id=timer_msg_id,
                                             text=f"⏱️Осталось: {counter} секунд")
 
-                if random.randint(0, 5) == 1 and self.can_get_neuro:
+                if random.randint(0, 5) == 1 and self.can_send_neuro:
                     msg = await bot.send_message(chat_id=self.chat_id,
                                            text=("🏅Немедленный розыгрыш!\n\n"
                                                  f"👇Нажми на кнопку ниже и получи нейро-рубли!"),
                                            reply_markup=kb.neuro_auction_giveaway)
                     self.gift_msg_id = msg.message_id
+                    self.can_send_neuro = False
 
                 counter -= 5
                 start_time = time.time()
@@ -1474,7 +1608,7 @@ class NeuroAuctionGame:
     async def evaluate_bets(self):
         if self.bet[0] != '':
             self.balance[self.bet[0]] -= self.bet[1]
-            self.items[self.bet[0]].append([self.current_item, f"Описание: {self.current_description}"])
+            self.player_items[self.bet[0]].append([self.items[self.round-1][0], self.items[self.round-1][1]])
 
             if self.bet[1] > self.the_most_expensive_item[2]:
                 self.the_most_expensive_item = [self.bet[0], self.current_item, self.bet[1]]
@@ -1500,16 +1634,16 @@ class NeuroAuctionGame:
             self.next_round()
             await self.start_round()
 
-    async def get_item(self):
+    async def get_items(self):
         try:
             import requests
 
             prompt = (
-                "Ты - бот, который генерирует предметы для игры 'Нейро-Аукцион'. Твоя задача - придумать один "
-                "предмет, который будет интересным и необычным. Предмет должен быть связан с чем-то "
-                "конкретным, например «Амулет, защищающий от понедельников» или «Невидимый кактус». Не пиши своих "
-                "рассуждений ни в каком виде и не выделяй текст! Твой ответ должен выглядеть так: '{название "
-                "предмета}\n\n---\n\n{описание}'. Как ты понял, ты должен разделять название и описание '\n\n---\n\n'"
+                f"Ты - бот, который генерирует предметы для игры 'Нейро-Аукцион'. Твоя задача - придумать {self.max_rounds}"
+                f"предметов, которые будут интересными и необычными. Предметы должны быть связаны с чем-то "
+                f"конкретным, например «Амулет, защищающий от понедельников» или «Невидимый кактус». Не пиши своих "
+                f"рассуждений ни в каком виде и не выделяй текст! Твой ответ должен выглядеть так:\nНазвание: [название_"
+                f"предмета]\nОписание: [описание]\n---\n"
             )
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
@@ -1520,7 +1654,7 @@ class NeuroAuctionGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
@@ -1535,9 +1669,11 @@ class NeuroAuctionGame:
 
             # text = answer.split('/think\n')[1]
             text = answer
-            parts = text.split('\n\n---\n\n')
-
-            return parts[0], parts[1]
+            parts = text.split('\n---\n')
+            for part in parts:
+                part_message = part.split("\n")
+                self.items.append([part_message[0].replace("Название: ", '').strip(), part_message[1].replace("Описание: ", '').strip()])
+            return 0
 
         except Exception as e:
             print(e)
@@ -1547,15 +1683,21 @@ class NeuroAuctionGame:
         global neuro_auction_game
 
         text = "🕹️Игра завершена! Итоги аукциона:\n\n"
-
         for player in self.players:
             text += f"👤 {player.full_name}:\n\n"
-            if self.items[player.full_name]:
-                items = ', '.join([f"{', '.join([item[0] for item in self.items[player.full_name]])}"])
+            if self.player_items[player.full_name]:
+                items = ', '.join([f"{', '.join([item[0] for item in self.player_items[player.full_name]])}"])
                 text += f"Предметы: {items}\n"
             else:
                 text += "Не купил ни одного предмета.\n"
             text += f"Баланс: {self.balance[player.full_name]}\n\n"
+
+        if self.the_most_cheap_item[0] == '':
+            self.the_most_cheap_item = ['никто', 'ничего', 0]
+        if self.the_most_expensive_item[0] == '':
+            self.the_most_expensive_item = ['никто', 'ничего', 0]
+        if self.the_most_expensive_item[0] == '' and self.the_most_cheap_item[0] == '':
+            text += "😮Никто не купил ни одного предмета на аукционе.\n\n"
 
         text += (
             f"💲Самый <u>дешёвый</u> предмет: <b>{self.the_most_cheap_item[1]}</b> за <b>{self.the_most_cheap_item[2]}</b> нейро-рублей. "
@@ -1584,7 +1726,7 @@ class NeuroAuctionGame:
         try:
             import requests
 
-            items = ', '.join([f"{player.full_name}: {', '.join([item[0] + " " + item[1] for item in self.items[player.full_name]])}" for player in self.players])
+            items = ', '.join([f"{player.full_name}: {', '.join([item[0] + " " + item[1] for item in self.player_items[player.full_name]])}" for player in self.players])
 
             prompt = (
                 f"Ты - бот, который оценивает коллекции игроков в игре 'Нейро-Аукцион'. Твоя задача - оценить "
@@ -1604,7 +1746,7 @@ class NeuroAuctionGame:
             }
 
             data = {
-                "model": "deepseek-ai/DeepSeek-V3.2",
+                "model": model_ai,
                 "messages": [
                     {
                         "role": "user",
