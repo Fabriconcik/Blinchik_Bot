@@ -1575,7 +1575,14 @@ class NeuroAuctionGame:
         self.the_most_cheap_item = ['', '', 999999999]
         self.items = []
 
-    def next_round(self):
+    async def next_round(self):
+        if self.can_send_neuro == False and self.can_get_neuro == True:
+            try:
+                await bot.delete_message(chat_id=self.chat_id,
+                                         message_id=self.gift_msg_id)
+            except Exception as e:
+                print(str(e))
+
         self.round += 1
         self.current_item = None
         self.bet = ['', 0]
