@@ -9,6 +9,7 @@ from aiogram.types import FSInputFile
 from openai import OpenAI
 import logging
 import os
+import sys
 from dotenv import load_dotenv
 import aiohttp
 
@@ -220,27 +221,38 @@ class Lobby:
 
     async def refresh_message(self):
         text = self.get_lobby_text()
-        image = FSInputFile("assets/images/lobby.png")
+        img_path = "assets/images/lobby.png"
 
-        if self.message_id is not None:
-            try:
-                await bot.delete_message(chat_id=self.chat_id, message_id=self.message_id)
+        if os.path.exists(img_path):
+            img = FSInputFile(img_path)
+
+            if self.message_id is not None:
+                try:
+                    await bot.delete_message(chat_id=self.chat_id, message_id=self.message_id)
+                    msg = await send_safe(
+                        chat_id=self.chat_id,
+                        photo=img,
+                        text=text,
+                        reply_markup=kb.join
+                    )
+                    self.message_id = msg.message_id
+                except Exception as e:
+                    logger.error(f"Error editing message: {e}")
+            else:
                 msg = await send_safe(
                     chat_id=self.chat_id,
-                    photo=image,
+                    photo=img,
                     text=text,
                     reply_markup=kb.join
                 )
                 self.message_id = msg.message_id
-            except Exception as e:
-                logger.error(f"Error editing message: {e}")
         else:
             msg = await send_safe(
                 chat_id=self.chat_id,
-                photo=image,
                 text=text,
                 reply_markup=kb.join
             )
+
             self.message_id = msg.message_id
 
     def get_lobby_text(self):
@@ -1873,10 +1885,19 @@ class NeuroAuctionGame:
 
 async def main():
     try:
+        if is_railway():
+            print("🚀 Запущено")
+
         dp.include_router(router)
         await dp.start_polling(bot)
+
     except Exception as e:
-        print(f"Error in main loop: {e}")
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def is_railway():
+    return os.getenv('RAILWAY_ENVIRONMENT') is not None
 
 
 if __name__ == '__main__':
