@@ -1724,7 +1724,7 @@ class NeuroAuctionGame:
         if self.round == self.max_rounds:
             await self.final_results()
         else:
-            self.next_round()
+            await self.next_round()
             await self.start_round()
 
     async def get_items(self):
