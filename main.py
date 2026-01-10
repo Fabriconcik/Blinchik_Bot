@@ -52,8 +52,6 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AI_TOKEN = os.getenv("AI_TOKEN")
 
-logger = logging.getLogger(__name__)
-
 session = AiohttpSession(
     timeout=30.0
 )
@@ -1883,26 +1881,40 @@ class NeuroAuctionGame:
             return f"⚠️ Ошибка обработки победителя: {str(e)}", False
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
+def is_server():
+    return os.getenv('RAILWAY_ENVIRONMENT') is not None or os.getenv('PORT') is not None
+
+
 async def main():
     try:
-        if is_railway():
-            print("🚀 Запущено")
+        logger.info("🚀 Запуск...")
+
+        if is_server():
+            logger.info("🌐 Запущено на сервере")
+            logger.info(f"Токен бота: {bool(BOT_TOKEN)}")
+            logger.info(f"AI токен: {bool(AI_TOKEN)}")
 
         dp.include_router(router)
-        await dp.start_polling(bot)
+
+        logger.info("🤖 Bot is starting polling...")
+        await dp.start_polling(bot, skip_updates=True)
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"❌ Ошибка: {e}", exc_info=True)
         sys.exit(1)
 
 
-def is_railway():
-    return os.getenv('RAILWAY_ENVIRONMENT') is not None
-
-
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print('Bot stopped')
+        logger.info("Остановлено")
+    except Exception as e:
+        logger.error(f"Ошибка: {e}", exc_info=True)
