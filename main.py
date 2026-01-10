@@ -444,6 +444,7 @@ class SurvivorsGame:
             for player in self.players:
                 strategies += str(player.id) + ": "
                 strategies += self.strategies[player.id] + "\n"
+            print(strategies)
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1789,6 +1790,13 @@ class NeuroAuctionGame:
 
     async def final_results(self):
         global neuro_auction_game
+
+        if self.can_send_neuro == False and self.can_get_neuro == True:
+            try:
+                await bot.delete_message(chat_id=self.chat_id,
+                                         message_id=self.gift_msg_id)
+            except Exception as e:
+                print(str(e))
 
         text = "🕹️Игра завершена! Итоги аукциона:\n\n"
         for player in self.players:
