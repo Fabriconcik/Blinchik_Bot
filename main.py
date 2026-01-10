@@ -444,7 +444,6 @@ class SurvivorsGame:
             for player in self.players:
                 strategies += str(player.id) + ": "
                 strategies += self.strategies[player.id] + "\n"
-            print(strategies)
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -484,6 +483,7 @@ class SurvivorsGame:
             response = requests.post(url, headers=headers, json=data)
             data = response.json()
             text = data['choices'][0]['message']['content']
+            print(text)
 
             try:
                 parts = text.split("\n---\n")
@@ -497,6 +497,8 @@ class SurvivorsGame:
                     survived = survived.replace('вердикт:', '').strip()
                     survived = True if 'выжил' in survived.lower() else False
                     evaluated_strategies[name] = [story, survived]
+
+                print(evaluated_strategies)
 
                 return evaluated_strategies
             except:
