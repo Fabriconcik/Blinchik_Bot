@@ -15,6 +15,8 @@ import aiohttp
 from app.handlers import router
 import app.keyboards as kb
 
+from aiogram.client.session.aiohttp import AiohttpSession
+
 #----------------------------------------------
 # emoji_request_queue = asyncio.Queue()
 #
@@ -37,7 +39,7 @@ import app.keyboards as kb
 #
 #         verdict = await get_neuro_verdict(game.all_emojies)
 #
-#         await bot.send_message(chat_id, f"🤖 Оценка нейросети готова!\n\n{verdict}")
+#         await send_safe(chat_id, f"🤖 Оценка нейросети готова!\n\n{verdict}")
 #
 #         game.next_stage()
 #
@@ -51,8 +53,13 @@ AI_TOKEN = os.getenv("AI_TOKEN")
 
 logger = logging.getLogger(__name__)
 
+session = AiohttpSession(
+    timeout=30.0
+)
+
 bot = Bot(token=BOT_TOKEN,
-          default=DefaultBotProperties(parse_mode='HTML'))
+          default=DefaultBotProperties(parse_mode='HTML'),
+          session=session)
 dp = Dispatcher()
 
 # model_ai = 'moonshotai/Kimi-K2-Instruct-0905'
@@ -62,6 +69,7 @@ model_ai = 'deepseek-ai/DeepSeek-V3.2'
 with open("topics.txt", "r", encoding="utf-8") as file:
     TOPICS_DATABASE = [line.strip() for line in file if line.strip()]
 
+rate_limiter = None
 lobby = None
 survivors_game = None
 true_or_fake_game = None
@@ -82,6 +90,124 @@ games_with_emoji = [
 ]
 players = []
 
+last_send_time = {}
+
+
+async def send_safe(chat_id, text, reply_markup=None, **kwargs):
+    global last_send_time
+
+    current_time = time.time()
+    if chat_id in last_send_time:
+        time_since_last = current_time - last_send_time[chat_id]
+        if time_since_last < 0.3:
+            await asyncio.sleep(0.3 - time_since_last)
+
+    last_send_time[chat_id] = time.time()
+
+    if 'photo' in kwargs:
+        for attempt in range(3):
+            try:
+                return await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=kwargs['photo'],
+                    caption=text,
+                    reply_markup=reply_markup
+                )
+            except Exception as e:
+                if attempt < 2:
+                    print("Ошибка, следующая попытка через 1 сек")
+                    await asyncio.sleep(1)
+                else:
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=reply_markup
+                    )
+    else:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            **kwargs
+        )
+
+
+async def edit_safe(chat_id, message_id, text, reply_markup=None, **kwargs):
+    global last_send_time
+
+    current_time = time.time()
+    if chat_id in last_send_time:
+        time_since_last = current_time - last_send_time[chat_id]
+        if time_since_last < 0.3:
+            await asyncio.sleep(0.3 - time_since_last)
+
+    last_send_time[chat_id] = time.time()
+
+    if 'photo' in kwargs:
+        for attempt in range(3):
+            try:
+                return await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=kwargs['photo'],
+                    caption=text,
+                    reply_markup=reply_markup
+                )
+            except Exception as e:
+                if attempt < 2:
+                    print("Ошибка, следующая попытка через 1 сек")
+                    await asyncio.sleep(1)
+                else:
+                    return await bot.edit_message_text(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        message_id=message_id
+                    )
+    else:
+        return await bot.edit_message_text(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            message_id=message_id,
+            **kwargs
+        )
+
+
+class SimpleRateLimiter:
+    def __init__(self, chat_id):
+        self.chat_id = chat_id
+        self.last_message_time = {}
+        self.message_count = {}
+
+    async def wait_for_chat(self):
+        now = time.time()
+
+        if self.chat_id not in self.last_message_time:
+            self.last_message_time[self.chat_id] = now
+            self.message_count[self.chat_id] = 1
+            return
+
+        time_since_last = now - self.last_message_time[self.chat_id]
+
+        if time_since_last > 60:
+            self.message_count[self.chat_id] = 1
+            self.last_message_time[self.chat_id] = now
+            return
+
+        if self.message_count[self.chat_id] >= 18:
+            wait_time = 60 - time_since_last
+            if wait_time > 0:
+                print(f"⚠️ Превышен лимит!")
+                await asyncio.sleep(wait_time + 0.5)
+                self.message_count[self.chat_id] = 1
+                self.last_message_time[self.chat_id] = time.time()
+                return
+
+        self.message_count[self.chat_id] += 1
+
+        if time_since_last < 0.2:
+            await asyncio.sleep(0.2 - time_since_last)
+
 
 class Lobby:
     def __init__(self, chat_id, leader):
@@ -99,20 +225,20 @@ class Lobby:
         if self.message_id is not None:
             try:
                 await bot.delete_message(chat_id=self.chat_id, message_id=self.message_id)
-                msg = await bot.send_photo(
+                msg = await send_safe(
                     chat_id=self.chat_id,
                     photo=image,
-                    caption=text,
+                    text=text,
                     reply_markup=kb.join
                 )
                 self.message_id = msg.message_id
             except Exception as e:
                 logger.error(f"Error editing message: {e}")
         else:
-            msg = await bot.send_photo(
+            msg = await send_safe(
                 chat_id=self.chat_id,
                 photo=image,
-                caption=text,
+                text=text,
                 reply_markup=kb.join
             )
             self.message_id = msg.message_id
@@ -142,7 +268,7 @@ class Lobby:
                 for i, game in enumerate(games_with_emoji)]
         )
 
-        await bot.send_message(
+        await send_safe(
             chat_id=self.chat_id,
             text=text,
             reply_markup=kb.choose_game
@@ -179,7 +305,7 @@ class SurvivorsGame:
             f"💬 Игроки будут выбирать ситуацию, а бот оценивать их стратегии. Удачи!"
         )
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
 
     async def choose_theme(self):
         self.player_turn = self.players[0]
@@ -191,7 +317,7 @@ class SurvivorsGame:
                 + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(self.current_themes))
         )
 
-        msg = await bot.send_message(
+        msg = await send_safe(
             chat_id=self.chat_id,
             text=text,
             reply_markup=kb.theme
@@ -203,7 +329,7 @@ class SurvivorsGame:
             f"✏️{self.player_turn.full_name}, напиши свою тему"
         )
 
-        await bot.edit_message_text(
+        await edit_safe(
             chat_id=self.chat_id,
             text=text,
             message_id=self.theme_message_id
@@ -219,8 +345,8 @@ class SurvivorsGame:
         await bot.delete_message(chat_id=self.chat_id,
                                  message_id=self.theme_message_id)
 
-        msg = await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        msg = await send_safe(chat_id=self.chat_id,
+                              text=text)
 
         self.theme_message_id = msg.message_id
 
@@ -235,7 +361,7 @@ class SurvivorsGame:
             missing_player = next(player for player in self.players if player.id not in self.strategies)
             text += f"Ждём стратегию от: {missing_player.full_name}"
 
-        await bot.edit_message_text(
+        await edit_safe(
             chat_id=self.chat_id,
             text=text,
             message_id=self.theme_message_id
@@ -255,10 +381,11 @@ class SurvivorsGame:
 
                 survived = True if evaluated_strategies[str(player.id)][1] else False
                 self.results[player.id].append(survived)
-                await bot.send_message(chat_id=self.chat_id, text=result_text)
 
-                if len(self.players) > 10:
-                    await asyncio.sleep(1)
+                await send_safe(chat_id=self.chat_id, text=result_text)
+
+                await asyncio.sleep(0.1)
+
             except Exception as e:
                 print(str(e))
 
@@ -266,7 +393,7 @@ class SurvivorsGame:
                 print(str(player.id))
                 result_text = (
                     f"👤 {player.full_name}\n"
-                    f"❗ОШИБКА ОБРАБОТКИ ОТВЕТА"
+                    f"❗ОШИБКА ОБРАБОТКИ ОТВЕТА\n"
                     f"📖 {evaluated_strategies}"
                 )
 
@@ -275,60 +402,30 @@ class SurvivorsGame:
                 else:
                     survived = False
                 self.results[player.id].append(survived)
-                await bot.send_message(chat_id=self.chat_id, text=result_text)
+
+                await send_safe(chat_id=self.chat_id, text=result_text)
+
+                await asyncio.sleep(0.1)
 
         await self.results_round()
 
     async def evaluate_strategies(self):
         try:
-            # prompt = (
+            # "content": (
             #     "Ты - бот, выносящий реалистичный вердикт в игре, где игроки придумывают стратегию выживания в "
             #     "различных ситуациях. Опиши развитие событий (4-6 предложений) в разговорном, непринуждённом стиле. "
             #     "Не пиши своих рассуждений ни в каком виде!. Мне нужна только одна история и вердикт. "
             #     "Если стратегия хорошая и может сработать - оставь в живых, иначе, придумай реалистичную ситуацию, "
             #     "где игрок погибает. Разбавь ответ юмором. Твоя задача, чтобы игрок погиб, однако ты должен "
             #     "справедливо оценивать "
-            #     "ситуацию. Обязательно условия игрока, если они не дают ему фантастических преимуществ (например  "
+            #     "ситуацию. Обязательно учитывай условия игрока, если они не дают ему фантастических преимуществ (например  "
             #     "бессмертие). Как пример, если игрок говорит, что в данной ситуации он ведёт себя аккуратно, он не "
             #     "может случайно споткнуться или наступить на что-то. Игрок может допускать небольшие ошибки в "
             #     "стратегии. Если игрок нарушает правила, выдавая себе невозможные способности, придумай реалистичное "
             #     "развитие событий. Учитывай, что фантастические предметы игрок может использовать (в пределах "
-            #     "разумного), если указал более-менее реалистичный способ их создания/приобретения. Не выделяй текст\n"
-            #     f"Тема раунда: {self.current_theme}\n, стратегия игрока: {strategy}\n"
-            #     "ОБЯЗАТЕЛЬНО! Формат:\nИстория: [текст]\nВердикт: [Выжил/Погиб]")
-            #
-            # # Инициализация клиента
-            # client = OpenAI(
-            #     base_url="https://openrouter.ai/api/v1",
-            #     api_key=AI_TOKEN
-            # )
-            #
-            # # Асинхронный запрос с ожиданием ответа
-            # completion = client.chat.completions.create(
-            #     extra_headers={
-            #         "HTTP-Referer": "https://mysite.com",
-            #         "X-Title": "My Site",
-            #     },
-            #     extra_body={},
-            #     #model="deepseek/deepseek-chat-v3-0324:free",
-            #     model="deepseek/deepseek-r1:free",
-            #     messages=[
-            #         {
-            #             "role": "user",
-            #             "content": prompt
-            #         }
-            #     ]
-            # )
-            #
-            # if completion and completion.choices:
-            #     answer = completion.choices[0].message.content
-            #     parts = answer.split('Вердикт:')
-            #     story = parts[0].replace('История:', '').strip()
-            #     survived = True if 'выжил' in parts[1].lower() else False
-            #     return story, survived
-            # else:
-            #     print(completion.choices[0].message.content)
-            #     return "⚠️ Автоматическая ошибка: история не сгенерирована.", False
+            #     "разумного), если указал более-менее реалистичный способ их создания/приобретения. Не выделяй текст, учитывай регистр.\n"
+            #     f"Тема раунда: {self.current_theme}\n, стратегии игроков: {strategies}\n"
+            #     "ОБЯЗАТЕЛЬНО! Формат:\nИгрок: [Имя_игрока]\nИстория: [текст]\nВердикт: [Выжил/Погиб]\n---\n")
 
             import requests
 
@@ -349,21 +446,25 @@ class SurvivorsGame:
                 "messages": [
                     {
                         "role": "user",
-                        "content": (
-                            "Ты - бот, выносящий реалистичный вердикт в игре, где игроки придумывают стратегию выживания в "
-                            "различных ситуациях. Опиши развитие событий (4-6 предложений) в разговорном, непринуждённом стиле. "
-                            "Не пиши своих рассуждений ни в каком виде!. Мне нужна только одна история и вердикт. "
-                            "Если стратегия хорошая и может сработать - оставь в живых, иначе, придумай реалистичную ситуацию, "
-                            "где игрок погибает. Разбавь ответ юмором. Твоя задача, чтобы игрок погиб, однако ты должен "
-                            "справедливо оценивать "
-                            "ситуацию. Обязательно учитывай условия игрока, если они не дают ему фантастических преимуществ (например  "
-                            "бессмертие). Как пример, если игрок говорит, что в данной ситуации он ведёт себя аккуратно, он не "
-                            "может случайно споткнуться или наступить на что-то. Игрок может допускать небольшие ошибки в "
-                            "стратегии. Если игрок нарушает правила, выдавая себе невозможные способности, придумай реалистичное "
-                            "развитие событий. Учитывай, что фантастические предметы игрок может использовать (в пределах "
-                            "разумного), если указал более-менее реалистичный способ их создания/приобретения. Не выделяй текст, учитывай регистр.\n"
-                            f"Тема раунда: {self.current_theme}\n, стратегии игроков: {strategies}\n"
-                            "ОБЯЗАТЕЛЬНО! Формат:\nИгрок: [Имя_игрока]\nИстория: [текст]\nВердикт: [Выжил/Погиб]\n---\n")
+                        "content": f"""Бот для игры "Выжившие". Оцени стратегию выживания. Тема: {self.current_theme}
+
+Правила:
+1. Опиши события (4-6 предложений) в разговорном стиле + юмор
+2. Цель: игрок должен погибнуть, но будь справедлив
+3. Учитывай условия игрока, если реалистичны или приведен реалистичный способ их получения (Пример: игрок сказал "буду аккуратен" → нельзя "споткнулся")
+4. Запрещены: рассуждения, выделение текста, фантастика без обоснования
+
+
+
+Стратегии игроков:
+{strategies}
+
+Формат для каждого:
+Игрок: [имя]
+История: [текст]
+Вердикт: [Выжил/Погиб]
+---
+"""
                     }
                 ]
             }
@@ -402,7 +503,7 @@ class SurvivorsGame:
             else:
                 text += f"💀 {player.full_name} погиб!\n"
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
 
         if self.round == self.max_rounds:
             await self.final_results()
@@ -429,7 +530,7 @@ class SurvivorsGame:
             text += f"\n🏆 Победитель: {winner[0]} с {winner[1]} выживанием(ями)!\n\n"
         else:
             text += f"\n🏆 Победители: {winner[0]} с {winner[1]} выживанием(ями)!\n\n"
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
         survivors_game = None
 
 
@@ -459,14 +560,14 @@ class TrueOrFakeGame:
             f"💬 Выберите 'правда' или 'ложь' в сообщении, чтобы проголосовать. Удачи!"
         )
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
 
     async def choose_thematic(self):
         text = (
             f"🎤 Лидер выбирает тематику фактов"
         )
 
-        await bot.send_message(
+        await send_safe(
             chat_id=self.chat_id,
             text=text,
         )
@@ -485,15 +586,15 @@ class TrueOrFakeGame:
             f"💬 Выберите 'правда' или 'ложь' в сообщении, чтобы проголосовать."
         )
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text,
-                               reply_markup=kb.answer
-                               )
+        await send_safe(chat_id=self.chat_id,
+                        text=text,
+                        reply_markup=kb.answer
+                        )
         handlers.true_or_fake_states = "waiting_for_choice"
 
     async def get_facts(self):
         try:
-            # prompt = (
+            # "content": (
             #     "Ты - бот, который генерирует интересные факты для игры 'Правда или Ложь' на определённую тему. Твоя "
             #     "задача - придумать пять неправдоподобных, удивительных фактов, о которых может не знать множество "
             #     "людей и написать их. Факт иногда должен быть правдой, иногда выдумкой, главное, чтобы звучал "
@@ -501,44 +602,6 @@ class TrueOrFakeGame:
             #     "ОБЯЗАТЕЛЬНО! Твой ответ должен выглядеть так:\n\nФакт: [текст]\nОтвет: [правда/ложь]\n\nФакт: ["
             #     "текст]\nОтвет: [правда/ложь]\n\nи тд\nОт себя ничего не добавляй и не выделяй текст(!). Ответ пиши "
             #     "только на русском языке")
-            #
-            # # Инициализация клиента
-            # client = OpenAI(
-            #     base_url="https://openrouter.ai/api/v1",
-            #     api_key=AI_TOKEN
-            # )
-            #
-            # # Асинхронный запрос с ожиданием ответа
-            # completion = client.chat.completions.create(
-            #     extra_headers={
-            #         "HTTP-Referer": "https://mysite.com",
-            #         "X-Title": "My Site",
-            #     },
-            #     extra_body={},
-            #     model="deepseek/deepseek-r1:free",
-            #     messages=[
-            #         {
-            #             "role": "user",
-            #             "content": prompt
-            #         }
-            #     ]
-            # )
-            #
-            # try:
-            #     num = 0
-            #     facts = {}
-            #     answer = completion.choices[0].message.content
-            #     facts_and_answers = answer.split('\n\n')
-            #     for i in facts_and_answers:
-            #         parts = i.split('Ответ:')
-            #         fact = parts[0].replace('Факт:', '').strip()
-            #         true_or_fake = True if 'правда' in parts[1].lower() else False
-            #         facts[num] = (fact, true_or_fake)
-            #         num += 1
-            # except:
-            #     print(completion.choices[0].message.content)
-            #     return f"⚠️ Ошибка обработки ответа", False
-            # return facts
 
             import requests
 
@@ -554,14 +617,18 @@ class TrueOrFakeGame:
                 "messages": [
                     {
                         "role": "user",
-                        "content": (
-                            "Ты - бот, который генерирует интересные факты для игры 'Правда или Ложь' на определённую тему. Твоя "
-                            "задача - придумать пять неправдоподобных, удивительных фактов, о которых может не знать множество "
-                            "людей и написать их. Факт иногда должен быть правдой, иногда выдумкой, главное, чтобы звучал "
-                            f"правдоподобно. Сейчас тематика фактов: '{self.thematic}'.\n\n"
-                            "ОБЯЗАТЕЛЬНО! Твой ответ должен выглядеть так:\n\nФакт: [текст]\nОтвет: [правда/ложь]\n\nФакт: ["
-                            "текст]\nОтвет: [правда/ложь]\n\nи тд\nОт себя ничего не добавляй и не выделяй текст(!). Ответ пиши "
-                            "только на русском языке")
+                        "content": f"""Создай 5 фактов для "Правда или Ложь" по теме: {self.thematic}
+
+Требования:
+1. Факты должны быть удивительными, малоизвестными
+2. Случайно распредели: правда/ложь
+3. Ложь должна звучать правдоподобно
+4. Только факты, без пояснений
+
+Формат:
+Факт: [текст]
+Ответ: [правда/ложь]
+(повторить 5 раз)"""
                     }
                 ]
             }
@@ -605,7 +672,7 @@ class TrueOrFakeGame:
 
         text += "\n\n🤖 Факт был: " + ("<b>правдой</b>" if self.true_or_fake else "<b>ложью</b>") + "\n\n"
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
 
         if self.round == self.max_rounds:
             await self.final_results()
@@ -633,7 +700,7 @@ class TrueOrFakeGame:
         else:
             text += f"\n🏆 Победители: <b>{winner[0]}</b> с {winner[1]} правильным(и) ответом(ами)!\n\n"
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
         true_or_fake_game = None
 
 
@@ -665,18 +732,18 @@ class WritersGame:
                 "🕹️В этой игре вы будете по очереди писать отрывок текста, который будет добавляться к общей истории.\n"
                 "🤖В конце каждого круга, первое и последнее предложение будет генерировать бот. Удачи!")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
     async def write_history(self):
         import app.handlers as handlers
 
         if self.num_sentence % (len(players) + 1) == 0 or self.num_sentence == 0:
-            msg = await bot.send_message(chat_id=self.chat_id,
-                                         text=(f"🔁<b>Круг {self.round + 1}/{self.max_rounds}</b>\n"
-                                               f"📒<b>Предложение {self.num_sentence - (self.max_in_round * self.round)}/{self.max_in_round}</b>\n\n"
-                                               f"🤖Сейчас <u>бот</u> придумывает предложение...\n\n")
-                                         )
+            msg = await send_safe(chat_id=self.chat_id,
+                                  text=(f"🔁<b>Круг {self.round + 1}/{self.max_rounds}</b>\n"
+                                        f"📒<b>Предложение {self.num_sentence - (self.max_in_round * self.round)}/{self.max_in_round}</b>\n\n"
+                                        f"🤖Сейчас <u>бот</u> придумывает предложение...\n\n")
+                                  )
             self.message_id = msg.message_id
 
             if self.num_sentence != 0:
@@ -685,15 +752,15 @@ class WritersGame:
             self.last_sentence = await self.get_AI_sentence()
             await self.confirm_sentence()
         else:
-            msg = await bot.send_message(chat_id=self.chat_id,
-                                         text=(f"🔁<b>Круг {self.round + 1}/{self.max_rounds}</b>\n"
-                                               f"📒<b>Предложение {self.num_sentence - (self.max_in_round * self.round)}/{self.max_in_round}</b>\n\n"
-                                               f"👤Игрок <u>{self.player_turn.full_name}</u> пишет предложение!\n\n"
-                                               )
-                                         )
+            msg = await send_safe(chat_id=self.chat_id,
+                                  text=(f"🔁<b>Круг {self.round + 1}/{self.max_rounds}</b>\n"
+                                        f"📒<b>Предложение {self.num_sentence - (self.max_in_round * self.round)}/{self.max_in_round}</b>\n\n"
+                                        f"👤Игрок <u>{self.player_turn.full_name}</u> пишет предложение!\n\n"
+                                        )
+                                  )
 
-            last_sentence_id = await bot.send_message(chat_id=self.player_turn.id,
-                                   text=f"Предыдущее предложение: {self.last_sentence}")
+            last_sentence_id = await send_safe(chat_id=self.player_turn.id,
+                                               text=f"Предыдущее предложение: {self.last_sentence}")
 
             self.last_sentence_id = last_sentence_id.message_id
             self.message_id = msg.message_id
@@ -701,7 +768,7 @@ class WritersGame:
 
     async def clear_last_sentence(self):
         await bot.delete_message(chat_id=self.player_turn.id,
-                                message_id=self.last_sentence_id)
+                                 message_id=self.last_sentence_id)
 
     async def get_AI_sentence(self):
         try:
@@ -714,12 +781,12 @@ class WritersGame:
             #               "других историй (если ты запоминаешь контекст разговора)."
             #               "Не пиши своих рассуждений ни в каком виде!. Мне нужно только одно предложение и не выделяй "
             #               "текст.")
-            # elif self.num_sentence == self.max_sentences:
+            # elif self.num_sentence == self.max_sentences - 1:
             #     prompt = (
             #         f"Ты - бот, который генерирует одно предложение для игры 'Писатели'. Твоя задача - придумать "
             #         f"предложение, которое будет неожиданно заканчивать историю. Можешь разбавить предложение юмором. "
             #         f"Не пиши своих рассуждений ни в каком виде!. Мне нужно только одно предложение и не выделяй "
-            #         f"текст. Твоя задача - завершить историю, основываясь на общем тексте: '{self.story}'. Пришли "
+            #         f"текст. Твоя задача - завершить историю, основываясь на предыдущем предложении: '{self.last_sentence}'. Пришли "
             #         f"только одно предложение, которое ты придумал(!)."
             #     )
             # else:
@@ -727,62 +794,43 @@ class WritersGame:
             #         f"Ты - бот, который генерирует одно предложение для игры 'Писатели'. Твоя задача - придумать предложение, "
             #         f"которое будет неожиданно заворачивать историю. Можешь разбавить предложение юмором. Не пиши своих рассуждений ни в каком виде!. Мне нужно "
             #         f"только одно предложение и не выделяй текст. Твоя задача - продолжить историю, основываясь на "
-            #         f"общем тексте: '{self.story}'. Пришли только последнее предложение, которое ты придумал(!)."
+            #         f"предыдущем предложении: '{self.last_sentence}'. Пришли только последнее предложение, которое ты придумал(!)."
             #     )
-            #
-            # client = OpenAI(
-            #     base_url="https://openrouter.ai/api/v1",
-            #     api_key=AI_TOKEN
-            # )
-            #
-            # completion = client.chat.completions.create(
-            #     extra_headers={
-            #         "HTTP-Referer": "https://mysite.com",
-            #         "X-Title": "My Site",
-            #     },
-            #     extra_body={},
-            #     model="deepseek/deepseek-r1:free",
-            #     messages=[
-            #         {
-            #             "role": "user",
-            #             "content": prompt
-            #         }
-            #     ]
-            # )
-            #
-            # if completion and completion.choices:
-            #     text = completion.choices[0].message.content
-            #     return text
-            # else:
-            #     print(completion.choices[0].message.content)
-            #     return "⚠️ Автоматическая ошибка: история не сгенерирована.", False
 
             import requests
 
             if self.num_sentence == 0:
-                prompt = ("Ты - бот, который генерирует предложение для игры 'Писатели'. Твоя задача - придумать одно "
-                          "предложение, которое станет началом необычной, интересной, загадочной или смешной истории. "
-                          "Первое предложение может рассказывать о сказочном герое, компании ребят, что исследуют "
-                          "заброшенный дом или о чём-либо другом. Начало истории должно быть абсолютно случайным и "
-                          "завязано на случайном объекте, действии, существе, ситуации. Не повторяйся с началом "
-                          "других историй (если ты запоминаешь контекст разговора)."
-                          "Не пиши своих рассуждений ни в каком виде!. Мне нужно только одно предложение и не выделяй "
-                          "текст.")
+                prompt = f"""Придумай первое предложение для истории (игра "Писатели").
+
+Требования:
+1. Одно предложение - начало истории
+2. Должно быть необычным, загадочным или смешным
+3. Случайная тема, объект, ситуация
+4. Избегай повторений с прошлыми историями
+
+Примеры тем: сказочный герой, исследование дома, неожиданная встреча"""
+
             elif self.num_sentence == self.max_sentences - 1:
-                prompt = (
-                    f"Ты - бот, который генерирует одно предложение для игры 'Писатели'. Твоя задача - придумать "
-                    f"предложение, которое будет неожиданно заканчивать историю. Можешь разбавить предложение юмором. "
-                    f"Не пиши своих рассуждений ни в каком виде!. Мне нужно только одно предложение и не выделяй "
-                    f"текст. Твоя задача - завершить историю, основываясь на предыдущем предложении: '{self.last_sentence}'. Пришли "
-                    f"только одно предложение, которое ты придумал(!)."
-                )
+                prompt = f"""Продолжи историю (игра "Писатели").
+
+Предыдущее предложение: {self.last_sentence}
+
+Требования:
+1. Добавь одно новое предложение
+2. Сделай неожиданный поворот
+3. Можно добавить юмор
+4. Только предложение, без пояснений"""
+
             else:
-                prompt = (
-                    f"Ты - бот, который генерирует одно предложение для игры 'Писатели'. Твоя задача - придумать предложение, "
-                    f"которое будет неожиданно заворачивать историю. Можешь разбавить предложение юмором. Не пиши своих рассуждений ни в каком виде!. Мне нужно "
-                    f"только одно предложение и не выделяй текст. Твоя задача - продолжить историю, основываясь на "
-                    f"предыдущем предложении: '{self.last_sentence}'. Пришли только последнее предложение, которое ты придумал(!)."
-                )
+                prompt = f"""Заверши историю (игра "Писатели").
+
+Предыдущее предложение: {self.last_sentence}
+
+Требования:
+1. Одно финальное предложение
+2. Неожиданный, но логичный конец
+3. Можно добавить юмор
+4. Только предложение, без пояснений"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -822,7 +870,7 @@ class WritersGame:
         # text = (f"Вот придуманное предложение:\n\n"
         #         f" {self.last_sentence}")
         #
-        # await bot.send_message(chat_id=self.chat_id,
+        # await send_safe(chat_id=self.chat_id,
         #                        text=text,
         #                        )
 
@@ -835,9 +883,9 @@ class WritersGame:
     async def get_results(self):
         text = f"🎉 Игра завершена! История:\n\n{self.story}"
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text,
-                               message_effect_id="5107584321108051014")
+        await send_safe(chat_id=self.chat_id,
+                        text=text,
+                        message_effect_id="5107584321108051014")
 
 
 class EmojiBattleGame:
@@ -863,13 +911,13 @@ class EmojiBattleGame:
                 "🕹️ В этой игре вы будете придумывать наборы эмодзи, которые в наибольшей степени соответствуют "
                 "заданной тематике. Удачи!")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         text = "🕑Бот генерирует тематики для игры..."
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         self.thematics = await self.get_thematics()
 
@@ -887,12 +935,12 @@ class EmojiBattleGame:
                 f"⏳У вас есть 45 секунд, чтобы придумать свой набор эмодзи и отправить его в чат!\n\n"
                 )
 
-        msg = await bot.send_message(chat_id=self.chat_id,
-                                     text=text)
+        msg = await send_safe(chat_id=self.chat_id,
+                              text=text)
         self.message_id = msg.message_id
 
-        timer_msg = await bot.send_message(chat_id=self.chat_id,
-                                           text=f"⏱️Осталось: 45 секунд")
+        timer_msg = await send_safe(chat_id=self.chat_id,
+                                    text=f"⏱️Осталось: 45 секунд")
         timer_msg_id = timer_msg.message_id
 
         handlers.emoji_battle_states = "waiting_for_emoji"
@@ -902,9 +950,9 @@ class EmojiBattleGame:
             elapsed_time = time.time() - start_time
             if elapsed_time >= 5:
                 counter -= 5
-                await bot.edit_message_text(chat_id=self.chat_id,
-                                            message_id=timer_msg_id,
-                                            text=f"⏱️Осталось: {counter} секунд")
+                await edit_safe(chat_id=self.chat_id,
+                                message_id=timer_msg_id,
+                                text=f"⏱️Осталось: {counter} секунд")
                 start_time = time.time()
             await asyncio.sleep(0.001)
 
@@ -920,46 +968,21 @@ class EmojiBattleGame:
                     f"⏰Время вышло!"
                     )
 
-            await bot.edit_message_text(chat_id=self.chat_id,
-                                        message_id=self.message_id,
-                                        text=text)
+            await edit_safe(chat_id=self.chat_id,
+                            message_id=self.message_id,
+                            text=text)
 
         await self.evaluate_emojies()
 
     async def get_thematics(self):
         try:
-            # prompt = (
-            #     "Ты - бот, который генерирует тематику для игры 'Эмодзи Битва'. Твоя задача - придумать одну "
-            #     "тематику, которая будет интересной и необычной. Тематика должна быть связана с чем-то "
-            #     "конкретным, например, 'фильмы', 'животные', 'еда' и т.д. Не пиши своих рассуждений ни в каком виде!. "
-            #     "Мне нужно только одна тематика и не выделяй текст.")
-            #
-            # client = OpenAI(
-            #     base_url="https://openrouter.ai/api/v1",
-            #     api_key=AI_TOKEN
-            # )
-            #
-            # completion = client.chat.completions.create(
-            #     extra_headers={
-            #         "HTTP-Referer": "https://mysite.com",
-            #         "X-Title": "My Site",
-            #     },
-            #     extra_body={},
-            #     model="deepseek/deepseek-r1:free",
-            #     messages=[
-            #         {
-            #             "role": "user",
-            #             "content": prompt
-            #         }
-            #     ]
-            # )
-            #
-            # if completion and completion.choices:
-            #     text = completion.choices[0].message.content
-            #     return text
-            # else:
-            #     print(completion.choices[0].message.content)
-            #     return "⚠️ Автоматическая ошибка: тематика не сгенерирована.", False
+            # "content": (
+            #     f"Ты - бот, который генерирует тематики для игры 'Эмодзи Битва'. Твоя задача - придумать {self.max_rounds} "
+            #     "случайных тематик, которые будут интересными, необычными, забавными или абсурдными."
+            #     "Тематики не должны быть связаны с чем-то конкретным, например 'поход в кино', 'прогулка "
+            #     "с собакой', 'взрывная вечеринка' и т.д. Не пиши своих рассуждений ни в каком виде и не "
+            #     "выделяй текст!. Ты должен прислать только тематики - её текст (без любых эмодзи). ОБЯЗАТЕЛЬНО!"
+            #     "Формат:\n[Тематика_1]\n---\n[Тематика_2]\n---\n ... \n---\n[Тематика_N]")
 
             import requests
 
@@ -975,13 +998,20 @@ class EmojiBattleGame:
                 "messages": [
                     {
                         "role": "user",
-                        "content": (
-                            f"Ты - бот, который генерирует тематики для игры 'Эмодзи Битва'. Твоя задача - придумать {self.max_rounds} "
-                            "случайных тематик, которые будут интересными, необычными, забавными или абсурдными."
-                            "Тематики не должны быть связаны с чем-то конкретным, например 'поход в кино', 'прогулка "
-                            "с собакой', 'взрывная вечеринка' и т.д. Не пиши своих рассуждений ни в каком виде и не "
-                            "выделяй текст!. Ты должен прислать только тематики - её текст (без любых эмодзи). ОБЯЗАТЕЛЬНО!"
-                            "Формат:\n[Тематика_1]\n---\n[Тематика_2]\n---\n ... \n---\n[Тематика_N]")
+                        "content": f"""Создай {self.max_rounds} тематик для "Эмодзи Битва".
+
+Требования:
+1. Тематики: необычные, забавные, абсурдные
+2. Конкретные ситуации (пример: "поход в кино")
+3. Без эмодзи в описании
+4. Только список тематик
+
+Формат:
+Тематика 1
+---
+Тематика 2
+---
+..."""
                     }
                 ]
             }
@@ -1019,16 +1049,16 @@ class EmojiBattleGame:
                 print(str(e))
                 print(verdicts)
                 print(player.full_name)
-                await bot.send_message(chat_id=self.chat_id,
-                                       text=f"⚠️ Ошибка при оценивании {player.full_name}, оценка будет выставлена случайно")
+                await send_safe(chat_id=self.chat_id,
+                                text=f"⚠️ Ошибка при оценивании {player.full_name}, оценка будет выставлена случайно")
                 verdict = str(random.randint(1, 10))
 
             text += verdict
             self.results[player.id].append(verdict.split('/')[0])
             text += f" - {self.emojies[player.full_name]}\n\n"
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         if self.round == self.max_rounds:
             await self.final_results()
@@ -1038,32 +1068,15 @@ class EmojiBattleGame:
 
     async def evaluate_emoji(self):
 
-            # prompt = (
-            #     "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить набор эмодзи, "
-            #     "который игрок отправил на определённую тематику. Оцени набор эмодзи по шкале от 1 до 10, где 1 - "
-            #     "это полный провал, а 10 - это идеальный набор эмодзи. Не пиши своих рассуждений ни в каком виде!. "
-            #     "Мне нужно только оценка и не выделяй текст.")
-            #
-            # client = OpenAI(
-            #     base_url="https://openrouter.ai/api/v1",
-            #     api_key=AI_TOKEN
-            # )
-            #
-            # completion = client.chat.completions.create(
-            #     extra_headers={
-            #         "HTTP-Referer": "https://mysite.com",
-            #         "X-Title": "My Site",
-            #     },
-            #     extra_body={},
-            #     model="deepseek/deepseek-r1:free",
-            #     messages=[
-            #         {
-            #             "role": "user",
-            #             "content": f"Тематика: {self.thematic}\nНабор эмодзи: {emoji}\n"
-            #                        f"Оценка: [текст]"
-            #         }
-            #     ]
-            # )
+        # "content": (
+        #     "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить "
+        #     "набор эмодзи, который игрок отправил на определённую тематику. Оцени набор эмодзи по "
+        #     "шкале от 1 до 10, где 1 - это полный провал, а 10 - это идеальный набор эмодзи. Не пиши "
+        #     "своих рассуждений ни в каком виде!. Мне нужно только оценка и не выделяй текст. Твой "
+        #     "ответ должен выглядеть так: '{кол-во баллов}/10'. Ты должен достаточной строго оценивать "
+        #     "набор на соответвие с тематикой, но не занижай оценку, оценивай справедливо."
+        #     f"Тематика раунда: '{self.thematic}'. Набор эмодзи: '{text}'. Обязательно! Формат:\n "
+        #     f"Игрок: [имя_игрока]\n[баллы]/10\n---\n.")
 
         import requests
 
@@ -1085,15 +1098,21 @@ class EmojiBattleGame:
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        "Ты - бот, который оценивает набор эмодзи в игре 'Эмодзи Битва'. Твоя задача - оценить "
-                        "набор эмодзи, который игрок отправил на определённую тематику. Оцени набор эмодзи по "
-                        "шкале от 1 до 10, где 1 - это полный провал, а 10 - это идеальный набор эмодзи. Не пиши "
-                        "своих рассуждений ни в каком виде!. Мне нужно только оценка и не выделяй текст. Твой "
-                        "ответ должен выглядеть так: '{кол-во баллов}/10'. Ты должен достаточной строго оценивать "
-                        "набор на соответвие с тематикой, но не занижай оценку, оценивай справедливо."
-                        f"Тематика раунда: '{self.thematic}'. Набор эмодзи: '{text}'. Обязательно! Формат:\n "
-                        f"Игрок: [имя_игрока]\n[баллы]/10\n---\n.")
+                    "content": f"""Оцени наборы эмодзи для темы: {self.thematic}
+
+Критерии (1-10):
+1. Соответствие теме
+2. Креативность
+3. Логичность последовательности
+Будь строгим, но справедливым.
+
+Наборы:
+{text}
+
+Формат для каждого:
+Игрок: [имя]
+[оценка]/10
+---"""
                 }
             ]
         }
@@ -1128,8 +1147,8 @@ class EmojiBattleGame:
     async def final_results(self):
         global emoji_battle_game
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text="🕹️Игра завершена! Оценка общих результатов...")
+        await send_safe(chat_id=self.chat_id,
+                        text="🕹️Игра завершена! Оценка общих результатов...")
 
         winner = ['никто', 0]
         text = "🕹️Игра завершена! Общие результаты:\n\n"
@@ -1152,10 +1171,20 @@ class EmojiBattleGame:
 
         text += await self.get_story(winner[0])
 
-        await bot.send_message(chat_id=self.chat_id, text=text)
+        await send_safe(chat_id=self.chat_id, text=text)
         emoji_battle_game = None
 
     async def get_story(self, winner):
+
+        # "content": (
+        #     f"Придумай историю о битве, в которой победил игрок(и) {winner}, основанную на наборе эмодзи, "
+        #     f"что игроки использовали в игре 'Эмодзи Битва'. Если победителей несколько, то они должны "
+        #     f"сражаться вместе против остальных. Если количество победителей равно {len(self.players)} (или победитель это единственный игрок), "
+        #     f"то он(и) сражается(ются) вместе с выдуманным противником. Если победитель один, то он должен "
+        #     f"сражаться с остальными игроками (если такие есть). Не выделяй текст и не пиши размышлений!. Ты можешь "
+        #     f"использовать только те эмодзи, что были использованы игроками в игре, причем каждый игрок "
+        #     f"может использовать только свой набор эмодзи. Вот эмодзи всех игроков: {players_emoji}.")
+
         import requests
 
         players_emoji = ''
@@ -1175,14 +1204,19 @@ class EmojiBattleGame:
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        f"Придумай историю о битве, в которой победил игрок(и) {winner}, основанную на наборе эмодзи, "
-                        f"что игроки использовали в игре 'Эмодзи Битва'. Если победителей несколько, то они должны "
-                        f"сражаться вместе против остальных. Если количество победителей равно {len(self.players)} (или победитель это единственный игрок), "
-                        f"то он(и) сражается(ются) вместе с выдуманным противником. Если победитель один, то он должен "
-                        f"сражаться с остальными игроками (если такие есть). Не выделяй текст и не пиши размышлений!. Ты можешь "
-                        f"использовать только те эмодзи, что были использованы игроками в игре, причем каждый игрок "
-                        f"может использовать только свой набор эмодзи. Вот эмодзи всех игроков: {players_emoji}.")
+                    "content": f"""Напиши историю битвы эмодзи.
+
+Победитель: {winner}
+Всего игроков: {len(self.players)}
+Эмодзи игроков:
+{players_emoji}
+
+Правила:
+1. Победитель сражается с остальными (если один)
+2. Если победителей много - они в команде
+3. Если все победили - против вымышленного врага
+4. Используй только указанные эмодзи
+5. Каждый игрок - только свои эмодзи"""
                 }
             ]
         }
@@ -1230,40 +1264,40 @@ class RandomCourtGame:
             f"Судьёй будет выступать ИИ. Он вынесет окончательное решение, основываясь на предоставленных данных.\n\n"
         )
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text,
-                               reply_markup=kb.role)
+        await send_safe(chat_id=self.chat_id,
+                        text=text,
+                        reply_markup=kb.role)
 
     async def confirm_role(self, role, player):
-        await bot.send_message(chat_id=self.chat_id,
-                               text=f"Игрок {player} выбрал роль <b>{role}</b>.\n\n")
+        await send_safe(chat_id=self.chat_id,
+                        text=f"Игрок {player} выбрал роль <b>{role}</b>.\n\n")
 
         if None not in self.roles.values():
-            await bot.send_message(chat_id=self.chat_id,
-                                   text=f"Все роли выбраны. Игра начинается!")
+            await send_safe(chat_id=self.chat_id,
+                            text=f"Все роли выбраны. Игра начинается!")
             await self.write_case()
 
     async def write_case(self):
         import app.handlers as handlers
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=f"⏱️Нейросеть придумывает случайный случай...")
+        await send_safe(chat_id=self.chat_id,
+                        text=f"⏱️Нейросеть придумывает случайный случай...")
 
         defendant_text, prosecutor_text, lawyer_text, self.case = await self.get_case()
 
-        await bot.send_message(chat_id=self.roles["Подсудимый"].id,
-                               text="Вы -- подсудимый🧍‍♂️🚓. Вот, что вы знаете:\n\n" + defendant_text)
-        await bot.send_message(chat_id=self.roles["Прокурор"].id,
-                               text="Вы -- прокурор👨‍💼🔨. Вот, что вы знаете:\n\n" + prosecutor_text)
-        await bot.send_message(chat_id=self.roles["Адвокат"].id,
-                               text="Вы -- адвокат👨‍💼⚖️. Вот, что вы знаете:\n\n" + lawyer_text)
+        await send_safe(chat_id=self.roles["Подсудимый"].id,
+                        text="Вы -- подсудимый🧍‍♂️🚓. Вот, что вы знаете:\n\n" + defendant_text)
+        await send_safe(chat_id=self.roles["Прокурор"].id,
+                        text="Вы -- прокурор👨‍💼🔨. Вот, что вы знаете:\n\n" + prosecutor_text)
+        await send_safe(chat_id=self.roles["Адвокат"].id,
+                        text="Вы -- адвокат👨‍💼⚖️. Вот, что вы знаете:\n\n" + lawyer_text)
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=f"В игру!\n"
-                                    f"У вас есть 5 раундов, чтобы выяснить, кто прав, а кто виноват.\n\n"
-                                    f"Обвиняется игрок <u>{self.roles["Подсудимый"].full_name}</u>.\n\n"
-                                    f"Его защищает игрок <u>{self.roles["Адвокат"].full_name}</u>.\n\n"
-                                    f"Обвиняет его игрок <u>{self.roles["Прокурор"].full_name}</u>.\n\n")
+        await send_safe(chat_id=self.chat_id,
+                        text=f"В игру!\n"
+                             f"У вас есть 5 раундов, чтобы выяснить, кто прав, а кто виноват.\n\n"
+                             f"Обвиняется игрок <u>{self.roles["Подсудимый"].full_name}</u>.\n\n"
+                             f"Его защищает игрок <u>{self.roles["Адвокат"].full_name}</u>.\n\n"
+                             f"Обвиняет его игрок <u>{self.roles["Прокурор"].full_name}</u>.\n\n")
 
         self.role_turn = self.roles["Прокурор"]
         handlers.random_court_states = "waiting_for_prosecutor"
@@ -1276,28 +1310,48 @@ class RandomCourtGame:
         else:
             self.role_turn = self.roles["Подсудимый"]
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=f"🔁Раунд {self.round} из {self.max_rounds}\n\n"
-                                    f"🗣️Сейчас говорит игрок <u>{self.role_turn.full_name}</u>.")
+        await send_safe(chat_id=self.chat_id,
+                        text=f"🔁Раунд {self.round} из {self.max_rounds}\n\n"
+                             f"🗣️Сейчас говорит игрок <u>{self.role_turn.full_name}</u>.")
 
     async def get_case(self):
         try:
             import requests
 
-            prompt = (
-                "Ты - бот, который генерирует случайный случай для игры 'Случайный Суд'. Твоя задача - "
-                "придумать один случай, который будет интересным и необычным. Ты должен распределить информацию "
-                "об одной и той же истории между участниками: подсудимым, прокурором и адвокатом. Случай должен "
-                "быть связан с чем-то конкретным, например, 'кража', 'убийство', 'разгром' и т.д. Учитывай, "
-                "что кто-то может иметь неверные сведения (и, если например это обвиняемый, то и адвокат, возможно, "
-                "имеет те же сведения, и наоборот). Также учитывай, что адвокат или прокурор может раздобыть некоторые данные ("
-                "возможно даже нечестным путём, но об этом знает возможно лишь он). Помни, что в правильной "
-                "истории нет лжи, в ней всё так, как было на самом деле. Не пиши своих"
-                "рассуждений ни в каком виде и не выделяй текст!. Твой ответ должен выглядеть так:\n\n(знания о "
-                "ситуации для подсудимого)\n\n---\n\n(знания о ситуации для прокурора)\n\n---\n\n(знания о ситуации для "
-                "адвоката)\n\n---\n\n(как всё было на самом деле)\n\nОБЯЗАТЕЛЬНО! Ты должен разделять информацию таким "
-                "образом: '\n\n---\n\n'"
-            )
+            # prompt = (
+            #     "Ты - бот, который генерирует случайный случай для игры 'Случайный Суд'. Твоя задача - "
+            #     "придумать один случай, который будет интересным и необычным. Ты должен распределить информацию "
+            #     "об одной и той же истории между участниками: подсудимым, прокурором и адвокатом. Случай должен "
+            #     "быть связан с чем-то конкретным, например, 'кража', 'убийство', 'разгром' и т.д. Учитывай, "
+            #     "что кто-то может иметь неверные сведения (и, если например это обвиняемый, то и адвокат, возможно, "
+            #     "имеет те же сведения, и наоборот). Также учитывай, что адвокат или прокурор может раздобыть некоторые данные ("
+            #     "возможно даже нечестным путём, но об этом знает возможно лишь он). Помни, что в правильной "
+            #     "истории нет лжи, в ней всё так, как было на самом деле. Не пиши своих"
+            #     "рассуждений ни в каком виде и не выделяй текст!. Твой ответ должен выглядеть так:\n\n(знания о "
+            #     "ситуации для подсудимого)\n\n---\n\n(знания о ситуации для прокурора)\n\n---\n\n(знания о ситуации для "
+            #     "адвоката)\n\n---\n\n(как всё было на самом деле)\n\nОБЯЗАТЕЛЬНО! Ты должен разделять информацию таким "
+            #     "образом: '\n\n---\n\n'"
+            # )
+
+            prompt = f"""Создай судебный случай для игры.
+
+Требования:
+1. Интересное, необычное дело (кража, конфликт и т.д.)
+2. Разные версии для участников:
+   - Подсудимый: может ошибаться
+   - Прокурор: может иметь скрытые данные
+   - Адвокат: может знать не всё
+3. Одна правдивая версия событий
+4. Никакой лжи - только разные точки зрения
+
+Формат:
+[Знания подсудимого]
+---
+[Знания прокурора]
+---
+[Знания адвоката]
+---
+[Истинная версия]"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1342,20 +1396,20 @@ class RandomCourtGame:
 
         text = f"🎉 Игра завершена! Вот как всё было на самом деле:\n\n{self.case}"
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text,
-                               message_effect_id="5046509860389126442")
+        await send_safe(chat_id=self.chat_id,
+                        text=text,
+                        message_effect_id="5046509860389126442")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text="🕹️Игра завершена! Судья выносит приговор...")
+        await send_safe(chat_id=self.chat_id,
+                        text="🕹️Игра завершена! Судья выносит приговор...")
         print(self.answers)
         print(self.roles)
 
         text = f"Судья вынес приговор:\n\n"
         text += await self.get_results()
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         random_court_game = None
 
@@ -1363,16 +1417,32 @@ class RandomCourtGame:
         try:
             import requests
 
-            prompt = (
-                f"Ты - бот, который выносит приговор в игре 'Случайный Суд'. Представь, будто ты опытный юрист, "
-                f"основывайся на реальных действующих законах РФ и выноси справедливый приговор. Твоя задача - "
-                f"вынести приговор по случаю, который был представлен. Ты должен учитывать всё, что было озвучено "
-                f"игроками. Вынеси приговор, основываясь на предоставленных данных. Не пиши своих "
-                f"рассуждений ни в каком виде и не выделяй текст!. Твой ответ должен выглядеть так:\n\n"
-                f"(приговор)\n\n(наказание)\n\n(объяснение приговора). Игроки выступали со следущими ролями: "
-                f"{self.roles}. Вот все показания игроков (игроки высказывались по представленному порядку и имели "
-                f"свои сведения о ситуации): {self.answers}"
-            )
+            # prompt = (
+            #     f"Ты - бот, который выносит приговор в игре 'Случайный Суд'. Представь, будто ты опытный юрист, "
+            #     f"основывайся на реальных действующих законах РФ и выноси справедливый приговор. Твоя задача - "
+            #     f"вынести приговор по случаю, который был представлен. Ты должен учитывать всё, что было озвучено "
+            #     f"игроками. Вынеси приговор, основываясь на предоставленных данных. Не пиши своих "
+            #     f"рассуждений ни в каком виде и не выделяй текст!. Твой ответ должен выглядеть так:\n\n"
+            #     f"(приговор)\n\n(наказание)\n\n(объяснение приговора). Игроки выступали со следущими ролями: "
+            #     f"{self.roles}. Вот все показания игроков (игроки высказывались по представленному порядку и имели "
+            #     f"свои сведения о ситуации): {self.answers}"
+            # )
+
+            prompt = f"""Вынеси приговор как юрист РФ.
+
+Роли: {self.roles}
+Показания (игроки высказывались по представленному порядку и имели свои сведения о ситуации): {self.answers}
+
+Требования:
+1. Основано на законах РФ
+2. Справедливый вердикт
+3. Учитывай все показания
+4. Без личных рассуждений
+
+Формат:
+[Приговор]
+[Наказание]
+[Обоснование]"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1411,17 +1481,17 @@ class FunRoomGame:
         self.message = None
 
     async def start_game(self):
-        await bot.send_message(chat_id=self.chat_id,
-                               text="Я говорил...\n\nТеперь напиши что-нибудь")
+        await send_safe(chat_id=self.chat_id,
+                        text="Я говорил...\n\nТеперь напиши что-нибудь")
 
     async def confirm_message(self):
         import app.handlers as handlers
 
         text = await self.get_answer()
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text,
-                               message_effect_id="5046589136895476101")
+        await send_safe(chat_id=self.chat_id,
+                        text=text,
+                        message_effect_id="5046589136895476101")
 
         handlers.fun_room_game_states = "waiting_for_message"
 
@@ -1502,22 +1572,20 @@ class NeuroAuctionGame:
                 f"⏱️У вас есть 30 секунд, чтобы сделать ставку на предмет.\n\n"
                 f"🏆После 5 раундов будет выбрана лучшая коллекция. Удачи!")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         text = "🕑Нейросеть генерирует предметы..."
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         await self.get_items()
-
-
 
     async def start_round(self):
         import app.handlers as handlers
 
-        self.current_item, self.current_description = self.items[self.round-1][0], self.items[self.round-1][1]
+        self.current_item, self.current_description = self.items[self.round - 1][0], self.items[self.round - 1][1]
 
         text = (f"🕹️Раунд {self.round} из {self.max_rounds}\n\n"
                 f"💎Предмет на аукционе: {self.current_item}\n\n"
@@ -1525,15 +1593,15 @@ class NeuroAuctionGame:
                 f"💰У вас будет 30 секунд, чтобы сделать ставку на предмет.\n\n"
                 f"💬 Напишите свою ставку в нейро-рублях.")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         await self.timer()
 
     async def got_neuro(self, player, count):
-        await bot.send_message(chat_id=self.chat_id,
-                               text=(f'✅ {player.full_name} получил {count} нейро!\n\n'
-                                     f'🤑Теперь у него на балансе {self.balance[player.full_name]} нейро'))
+        await send_safe(chat_id=self.chat_id,
+                        text=(f'✅ {player.full_name} получил {count} нейро!\n\n'
+                              f'🤑Теперь у него на балансе {self.balance[player.full_name]} нейро'))
         await bot.delete_message(chat_id=self.chat_id,
                                  message_id=self.gift_msg_id)
 
@@ -1541,8 +1609,8 @@ class NeuroAuctionGame:
         import app.handlers as handlers
 
         text = f"🕑У вас есть 15 секунд, чтобы оценить предмет перед началом аукциона"
-        msg = await bot.send_message(chat_id=self.chat_id,
-                                     text=text)
+        msg = await send_safe(chat_id=self.chat_id,
+                              text=text)
         timer_msg_id = msg.message_id
 
         start_time = time.time()
@@ -1552,9 +1620,9 @@ class NeuroAuctionGame:
             if elapsed_time >= 5:
                 counter -= 5
                 text = f"🕑У вас есть {counter} секунд, чтобы оценить предмет перед началом аукциона"
-                await bot.edit_message_text(chat_id=self.chat_id,
-                                            message_id=timer_msg_id,
-                                            text=text)
+                await edit_safe(chat_id=self.chat_id,
+                                message_id=timer_msg_id,
+                                text=text)
 
                 start_time = time.time()
             await asyncio.sleep(0.001)
@@ -1563,14 +1631,14 @@ class NeuroAuctionGame:
                                  message_id=timer_msg_id)
 
         text = f"👨‍⚖️🕑Время ставок!"
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         handlers.neuro_auction_states = "waiting_for_bet"
 
         text = f"⏱️Осталось: 30 секунд"
-        msg = await bot.send_message(chat_id=self.chat_id,
-                                     text=text)
+        msg = await send_safe(chat_id=self.chat_id,
+                              text=text)
         timer_msg_id = msg.message_id
 
         start_time = time.time()
@@ -1579,15 +1647,15 @@ class NeuroAuctionGame:
             elapsed_time = time.time() - start_time
 
             if elapsed_time >= 5:
-                await bot.edit_message_text(chat_id=self.chat_id,
-                                            message_id=timer_msg_id,
-                                            text=f"⏱️Осталось: {counter} секунд")
+                await edit_safe(chat_id=self.chat_id,
+                                message_id=timer_msg_id,
+                                text=f"⏱️Осталось: {counter} секунд")
 
                 if random.randint(0, 5) == 1 and self.can_send_neuro:
-                    msg = await bot.send_message(chat_id=self.chat_id,
-                                           text=("🏅Немедленный розыгрыш!\n\n"
-                                                 f"👇Нажми на кнопку ниже и получи нейро-рубли!"),
-                                           reply_markup=kb.neuro_auction_giveaway)
+                    msg = await send_safe(chat_id=self.chat_id,
+                                          text=("🏅Немедленный розыгрыш!\n\n"
+                                                f"👇Нажми на кнопку ниже и получи нейро-рубли!"),
+                                          reply_markup=kb.neuro_auction_giveaway)
                     self.gift_msg_id = msg.message_id
                     self.can_send_neuro = False
 
@@ -1599,16 +1667,16 @@ class NeuroAuctionGame:
         handlers.neuro_auction_states = None
 
         text = f"⌛️Время вышло!\n\n"
-        await bot.edit_message_text(chat_id=self.chat_id,
-                                    message_id=timer_msg_id,
-                                    text=text)
+        await edit_safe(chat_id=self.chat_id,
+                        message_id=timer_msg_id,
+                        text=text)
 
         await self.evaluate_bets()
 
     async def evaluate_bets(self):
         if self.bet[0] != '':
             self.balance[self.bet[0]] -= self.bet[1]
-            self.player_items[self.bet[0]].append([self.items[self.round-1][0], self.items[self.round-1][1]])
+            self.player_items[self.bet[0]].append([self.items[self.round - 1][0], self.items[self.round - 1][1]])
 
             if self.bet[1] > self.the_most_expensive_item[2]:
                 self.the_most_expensive_item = [self.bet[0], self.current_item, self.bet[1]]
@@ -1625,8 +1693,8 @@ class NeuroAuctionGame:
                     f"Баланс всех игроков:\n\n"
                     f"{'\n'.join([f'{player.full_name} - {self.balance[player.full_name]}' for player in self.players])}\n\n")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         if self.round == self.max_rounds:
             await self.final_results()
@@ -1638,13 +1706,26 @@ class NeuroAuctionGame:
         try:
             import requests
 
-            prompt = (
-                f"Ты - бот, который генерирует предметы для игры 'Нейро-Аукцион'. Твоя задача - придумать {self.max_rounds}"
-                f"предметов, которые будут интересными и необычными. Предметы должны быть связаны с чем-то "
-                f"конкретным, например «Амулет, защищающий от понедельников» или «Невидимый кактус». Не пиши своих "
-                f"рассуждений ни в каком виде и не выделяй текст! Твой ответ должен выглядеть так:\nНазвание: [название_"
-                f"предмета]\nОписание: [описание]\n---\n"
-            )
+            # prompt = (
+            #     f"Ты - бот, который генерирует предметы для игры 'Нейро-Аукцион'. Твоя задача - придумать {self.max_rounds}"
+            #     f"предметов, которые будут интересными и необычными. Предметы должны быть связаны с чем-то "
+            #     f"конкретным, например «Амулет, защищающий от понедельников» или «Невидимый кактус». Не пиши своих "
+            #     f"рассуждений ни в каком виде и не выделяй текст! Твой ответ должен выглядеть так:\nНазвание: [название_"
+            #     f"предмета]\nОписание: [описание]\n---\n"
+            # )
+
+            prompt = f"""Создай {self.max_rounds} предметов для аукциона.
+
+Требования:
+1. Креативные, необычные предметы
+2. Примеры: "Амулет от понедельников", "Невидимый кактус"
+3. Каждый предмет: название + краткое описание
+4. Без пояснений и рассуждений
+
+Формат для каждого:
+Название: [название]
+Описание: [текст]
+---"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1672,7 +1753,8 @@ class NeuroAuctionGame:
             parts = text.split('\n---\n')
             for part in parts:
                 part_message = part.split("\n")
-                self.items.append([part_message[0].replace("Название: ", '').strip(), part_message[1].replace("Описание: ", '').strip()])
+                self.items.append([part_message[0].replace("Название: ", '').strip(),
+                                   part_message[1].replace("Описание: ", '').strip()])
             return 0
 
         except Exception as e:
@@ -1705,11 +1787,11 @@ class NeuroAuctionGame:
             f"💰Самый <u>дорогой</u> предмет: <b>{self.the_most_expensive_item[1]}</b> за <b>{self.the_most_expensive_item[2]}</b> нейро-рублей. "
             f"Его приобрёл игрок <u>{self.the_most_expensive_item[0]}</u>\n\n")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text="🤖Сейчас нейросеть оценит коллекции игроков и выберет победителя...")
+        await send_safe(chat_id=self.chat_id,
+                        text="🤖Сейчас нейросеть оценит коллекции игроков и выберет победителя...")
 
         winner, story, criteria = await self.get_winner()
 
@@ -1717,8 +1799,8 @@ class NeuroAuctionGame:
                 f"📖История его победы:\n\n{story}\n\n"
                 f"🧾Критерии оценки коллекций:\n\n{criteria}")
 
-        await bot.send_message(chat_id=self.chat_id,
-                               text=text)
+        await send_safe(chat_id=self.chat_id,
+                        text=text)
 
         neuro_auction_game = None
 
@@ -1726,17 +1808,37 @@ class NeuroAuctionGame:
         try:
             import requests
 
-            items = ', '.join([f"{player.full_name}: {', '.join([item[0] + " " + item[1] for item in self.player_items[player.full_name]])}" for player in self.players])
+            items = ', '.join([
+                f"{player.full_name}: {', '.join([item[0] + " " + item[1] for item in self.player_items[player.full_name]])}"
+                for player in self.players])
 
-            prompt = (
-                f"Ты - бот, который оценивает коллекции игроков в игре 'Нейро-Аукцион'. Твоя задача - оценить "
-                f"коллекции игроков и выбрать победителя. Критерии, по которым ты оцениваешь коллекции, "
-                f"ты придумываешь сам. Учитывай, что ты оцениваешь все коллекции по одним критериям. Твой ответ "
-                "должен выглядеть так:\n\n{Победитель}\n\n---\n\n{История его победы}\n\n---\n\n{Критерии "
-                "оценки коллекций}\n\nТы должен разделять части ответа таким образом: '\n\n---\n\n'. Не пиши "
-                f"рассуждений и не выделяй текст! Можешь добавить в ответ юмора (оценивать по комичным критериям, "
-                f"придумывать комичные сюжеты и тп). Вот коллекции игроков: {items}"
-            )
+            # prompt = (
+            #     f"Ты - бот, который оценивает коллекции игроков в игре 'Нейро-Аукцион'. Твоя задача - оценить "
+            #     f"коллекции игроков и выбрать победителя. Критерии, по которым ты оцениваешь коллекции, "
+            #     f"ты придумываешь сам. Учитывай, что ты оцениваешь все коллекции по одним критериям. Твой ответ "
+            #     "должен выглядеть так:\n\n{Победитель}\n\n---\n\n{История его победы}\n\n---\n\n{Критерии "
+            #     "оценки коллекций}\n\nТы должен разделять части ответа таким образом: '\n\n---\n\n'. Не пиши "
+            #     f"рассуждений и не выделяй текст! Можешь добавить в ответ юмора (оценивать по комичным критериям, "
+            #     f"придумывать комичные сюжеты и тп). Вот коллекции игроков: {items}"
+            # )
+
+            prompt = f"""Оцени коллекции аукциона и выбери победителя.
+
+Коллекции:
+{items}
+
+Правила:
+1. Придумай свои креативные критерии оценки
+2. Одинаковые критерии для всех игроков
+3. Добавь юмор в историю победы
+4. Без личных рассуждений и пояснений
+
+Формат вывода:
+[Имя победителя]
+---
+[Юмористическая история победы]
+---
+[Критерии оценки]"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 

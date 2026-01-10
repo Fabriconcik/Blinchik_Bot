@@ -29,40 +29,65 @@ neuro_auction_states = None
 @router.message(Command('lobby'))
 async def create_lobby(message: Message):
     import main
+
     if main.lobby is not None:
-        await message.answer('Лобби уже создано')
+        await main.send_safe(chat_id=message.chat.id, text='Лобби уже создано')
         return
 
     main.lobby = main.Lobby(
         chat_id=message.chat.id,
         leader=message.from_user
     )
-    await message.answer('Лобби создано')
+    await main.send_safe(chat_id=message.chat.id, text='Лобби создано')
+    main.rate_limiter = main.SimpleRateLimiter(message.chat.id)
     await main.lobby.refresh_message()
 
 
 @router.callback_query(F.data == 'join')
-@router.message(Command('join'))
-async def join_lobby(message: Message):
+async def join_lobby(callback: Message):
     import main
 
     if main.lobby is None:
-        await message.answer('Лобби не существует')
+        await callback.answer(text='Лобби не существует')
         return
 
-    if message.from_user in main.lobby.participants:
-        await message.answer(f'❗{message.from_user.full_name}, ты уже в лобби')
+    if callback.from_user in main.lobby.participants:
+        await callback.answer(text=f'❗Ты уже в лобби')
         return
 
     if not (
             main.survivors_game is None and main.true_or_fake_game is None and main.writers_game is None
             and main.emoji_battle_game is None and main.random_court_game is None and main.fun_room_game is None and
             main.neuro_auction_game is None):
-        await message.answer(f"❗{message.from_user.full_name}, дождись окончания игры")
+        await callback.answer(text=f"❗Дождись окончания игры")
+        return
+
+    main.lobby.participants.append(callback.from_user)
+    await callback.answer(text='Ты присоединился к лобби')
+    await main.lobby.refresh_message()
+
+
+@router.message(Command('join'))
+async def join_lobby(message: Message):
+    import main
+
+    if main.lobby is None:
+        await main.send_safe(chat_id=message.chat.id, text='Лобби не существует')
+        return
+
+    if message.from_user in main.lobby.participants:
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.full_name}, ты уже в лобби')
+        return
+
+    if not (
+            main.survivors_game is None and main.true_or_fake_game is None and main.writers_game is None
+            and main.emoji_battle_game is None and main.random_court_game is None and main.fun_room_game is None and
+            main.neuro_auction_game is None):
+        await main.send_safe(chat_id=message.chat.id, text=f"❗{message.from_user.full_name}, дождись окончания игры")
         return
 
     main.lobby.participants.append(message.from_user)
-    await message.answer('Ты присоединился к лобби')
+    await main.send_safe(chat_id=message.chat.id, text='Ты присоединился к лобби')
     await main.lobby.refresh_message()
 
 
@@ -72,11 +97,11 @@ async def start_game(message: Message):
     global game_states
 
     if main.lobby is None:
-        await message.answer('❌Лобби не существует')
+        await main.send_safe(chat_id=message.chat.id, text='❌Лобби не существует')
         return
 
     if message.from_user != main.lobby.leader:
-        await message.answer('❗Ты не лидер лобби')
+        await main.send_safe(chat_id=message.chat.id, text='❗Ты не лидер лобби')
         return
 
     main.survivors_game = None
@@ -108,15 +133,16 @@ async def choose_game(message: Message):
         list({'1️⃣': '1', '2️⃣': '2', '3️⃣': '3', '4️⃣': '4', '5️⃣': 5, '6️⃣': 6}.items())[:len(main.games)])
 
     if message.text not in number_map:
-        await message.answer('❗Неккоректный номер игры')
+        await main.send_safe(chat_id=message.chat.id, text='❗Неккоректный номер игры')
         return
 
     if message.from_user in voted:
-        await message.answer('❗Ты уже проголосовал')
+        await main.send_safe(chat_id=message.chat.id, text='❗Ты уже проголосовал')
         return
 
     voted[message.from_user] = number_map[message.text]
-    await message.answer(f'✅ {message.from_user.first_name} проголосовал за игру {message.text}')
+    await main.send_safe(chat_id=message.chat.id,
+                         text=f'✅ {message.from_user.first_name} проголосовал за игру {message.text}')
     if len(voted) == len(main.lobby.participants):
         game_states = None
         votes = list(map(int, voted.values()))
@@ -124,7 +150,12 @@ async def choose_game(message: Message):
         max_votes = max(votes, key=votes.count)
         main.lobby.game = main.games[max_votes - 1]
         voted = {}
-        await message.answer(f'👥✅ Все проголосовали\n\nВыбрана игра: <b>{main.lobby.game}</b>')
+
+        await main.send_safe(
+            chat_id=message.chat.id,
+            text=f'👥✅ Все проголосовали\n\nВыбрана игра: <b>{main.lobby.game}</b>'
+        )
+
         game = main.lobby.game
 
         if game == 'Survivors':
@@ -153,7 +184,7 @@ async def choose_game(message: Message):
                 main.random_court_game = main.RandomCourtGame(main.lobby.chat_id)
                 await main.random_court_game.start_game()
             else:
-                await message.answer("Должно быть ровно 3 игрока! Голосуйте заново.")
+                await main.send_safe(chat_id=message.chat.id, text="Должно быть ровно 3 игрока! Голосуйте заново.")
                 game_states = "waiting_for_game"
 
         elif game == 'Fun Room':
@@ -183,11 +214,11 @@ async def delete_lobby(message: Message):
     global game
 
     if main.lobby is None:
-        await message.answer("❗В этом чате нет созданных лобби")
+        await main.send_safe(chat_id=message.chat.id, text="❗В этом чате нет созданных лобби")
         return
 
     if message.from_user != main.lobby.leader:
-        await message.answer(f"❗{message.from_user.full_name}, Вы не лидер лобби")
+        await main.send_safe(chat_id=message.chat.id, text=f"❗{message.from_user.full_name}, Вы не лидер лобби")
         return
 
     leader = main.lobby.leader.full_name
@@ -208,7 +239,7 @@ async def delete_lobby(message: Message):
     game_states = ''
     game = ''
     voted = {}
-    await message.answer(f"✅Лидер {leader} расформировал лобби")
+    await main.send_safe(chat_id=message.chat.id, text=f"✅Лидер {leader} расформировал лобби")
 
 
 #Survivors
@@ -298,7 +329,7 @@ async def receive_theme(message: Message):
         return
 
     if message.from_user != main.survivors_game.player_turn:
-        await message.answer(f'❗{message.from_user.first_name}, не ты выбираешь тему')
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, не ты выбираешь тему')
         return
 
     main.survivors_game.current_theme = message.text
@@ -334,9 +365,9 @@ async def receive_strategy(message: Message):
     except Exception as e:
         print(f"Ошибка при удалении сообщения: {e}")
 
-    await message.answer(f'✅ {message.from_user.first_name}, стратегия принята!')
+    await main.send_safe(chat_id=message.chat.id, text=f'✅ {message.from_user.first_name}, стратегия принята!')
     if len(main.survivors_game.strategies) == len(main.survivors_game.players):
-        await message.answer('👥✅ Все стратегии приняты, начинаем оценку!')
+        await main.send_safe(chat_id=message.chat.id, text='👥✅ Все стратегии приняты, начинаем оценку!')
         survivors_states = None
         await main.survivors_game.evaluate_strategies_message()
 
@@ -351,7 +382,7 @@ async def receive_thematic(message: Message):
         return
 
     if message.from_user != main.lobby.leader:
-        await message.answer(f'❗{message.from_user.full_name}, не ты выбираешь тематику')
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.full_name}, не ты выбираешь тематику')
         return
 
     main.true_or_fake_game.thematic = message.text
@@ -360,7 +391,8 @@ async def receive_thematic(message: Message):
         await message.delete()
     except Exception as e:
         print(f"Ошибка при удалении сообщения: {e}")
-    await message.answer(f"✅ Выбрана тематика <b>{message.text}</b>\n\n🕑Формируем факты...")
+    await main.send_safe(chat_id=message.chat.id,
+                         text=f"✅ Выбрана тематика <b>{message.text}</b>\n\n🕑Формируем факты...")
     await main.true_or_fake_game.forming_facts()
     await main.true_or_fake_game.write_fact()
 
@@ -376,19 +408,19 @@ async def receive_thematic(message: Message):
 #         return
 #
 #     if message.from_user.id in main.true_or_fake_game.votes:
-#         await message.answer('❗Ты уже проголосовал')
+#         await main.send_safe(chat_id=message.chat.id, text= '❗Ты уже проголосовал')
 #         return
 #
 #     if message.text not in ['Правда', 'Ложь']:
-#         await message.answer('❗Некорректный ответ')
+#         await main.send_safe(chat_id=message.chat.id, text= '❗Некорректный ответ')
 #         print(message.text)
 #         return
 #
 #     main.true_or_fake_game.votes[message.from_user.id] = True if message.text.lower() == 'правда' else False
 #     await message.delete()
-#     await message.answer(f'✅ {message.from_user.first_name} проголосовал')
+#     await main.send_safe(chat_id=message.chat.id, text= f'✅ {message.from_user.first_name} проголосовал')
 #     if len(main.true_or_fake_game.votes) == len(main.true_or_fake_game.players):
-#         await message.answer('👥✅ Все проголосовали, начинаем проверку!')
+#         await main.send_safe(chat_id=message.chat.id, text= '👥✅ Все проголосовали, начинаем проверку!')
 #         true_or_fake_states = None
 #         await main.true_or_fake_game.evaluate_votes()
 
@@ -441,7 +473,8 @@ async def receive_sentence(message: Message):
         return
 
     if message.from_user != main.writers_game.player_turn:
-        await message.answer(f'❗{message.from_user.first_name}, не ты выбираешь предложение')
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f'❗{message.from_user.first_name}, не ты выбираешь предложение')
         return
 
     main.writers_game.last_sentence = message.text
@@ -466,14 +499,15 @@ async def receive_emoji(message: Message):
         return
 
     if main.emoji_battle_game.emojies[message.from_user.full_name] != "":
-        await message.answer(f"❗{message.from_user.first_name}, ты уже прислал набор эмодзи")
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f"❗{message.from_user.first_name}, ты уже прислал набор эмодзи")
         return
 
     if not is_only_emojis(message.text):
-        await message.answer("❗Сообщение должно содержать только эмодзи")
+        await main.send_safe(chat_id=message.chat.id, text="❗Сообщение должно содержать только эмодзи")
         return
 
-    await message.answer(f'✅ {message.from_user.first_name}, эмодзи приняты!')
+    await main.send_safe(chat_id=message.chat.id, text=f'✅ {message.from_user.first_name}, эмодзи приняты!')
 
     main.emoji_battle_game.emojies[message.from_user.full_name] = message.text
     main.emoji_battle_game.all_emojies[message.from_user.full_name] += message.text
@@ -488,7 +522,7 @@ async def receive_emoji(message: Message):
             n += 1
 
     if n == len(main.emoji_battle_game.players):
-        await message.answer('👥✅ Все эмодзи приняты, начинаем оценку!')
+        await main.send_safe(chat_id=message.chat.id, text='👥✅ Все эмодзи приняты, начинаем оценку!')
         emoji_battle_states = None
 
 
@@ -573,7 +607,7 @@ async def waiting_for_prosecutor(message: Message):
         return
 
     if message.from_user != main.random_court_game.role_turn:
-        await message.answer(f'❗{message.from_user.first_name}, сейчас не твой ход')
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
     main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
@@ -589,7 +623,7 @@ async def waiting_for_defendant(message: Message):
         return
 
     if message.from_user != main.random_court_game.role_turn:
-        await message.answer(f'❗{message.from_user.first_name}, сейчас не твой ход')
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
     main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
@@ -611,7 +645,7 @@ async def waiting_for_lawyer(message: Message):
         return
 
     if message.from_user != main.random_court_game.role_turn:
-        await message.answer(f'❗{message.from_user.first_name}, сейчас не твой ход')
+        await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
     main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
@@ -629,7 +663,7 @@ async def waiting_for_message(message: Message):
     if message.chat.id != main.fun_room_game.chat_id:
         return
 
-    await message.answer("Теперь жди")
+    await main.send_safe(chat_id=message.chat.id, text="Теперь жди")
     await message.react(reaction='👎')
     main.fun_room_game.message = message.text
     fun_room_states = None
@@ -677,24 +711,29 @@ async def receive_bet(message: Message):
     try:
         bet = int(message.text)
     except ValueError:
-        await message.answer(f'❗{message.from_user.full_name}, неверный формат, введите число')
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f'❗{message.from_user.full_name}, неверный формат, введите число')
         return
 
     if bet <= 0:
-        await message.answer(f'❗{message.from_user.full_name}, ставка должна быть больше 0')
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f'❗{message.from_user.full_name}, ставка должна быть больше 0')
         return
 
     if bet > main.neuro_auction_game.balance[message.from_user.full_name]:
-        await message.answer(f'❗{message.from_user.full_name}, недостаточно нейро для ставки')
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f'❗{message.from_user.full_name}, недостаточно нейро для ставки')
         return
 
     if bet <= main.neuro_auction_game.bet[1]:
-        await message.answer(f'❗{message.from_user.full_name}, ставка должна быть больше предыдущей')
+        await main.send_safe(chat_id=message.chat.id,
+                             text=f'❗{message.from_user.full_name}, ставка должна быть больше предыдущей')
         return
 
     main.neuro_auction_game.bet = [message.from_user.full_name, bet]
     await message.delete()
-    await message.answer(f'✅ <u>{message.from_user.first_name}</u> сделал ставку <b>{bet}</b> нейро')
+    await main.send_safe(chat_id=message.chat.id,
+                         text=f'✅ <u>{message.from_user.first_name}</u> сделал ставку <b>{bet}</b> нейро')
 
 
 @router.message()
