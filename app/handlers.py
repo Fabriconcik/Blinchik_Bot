@@ -26,6 +26,14 @@ neuro_auction_states = None
 
 #lobby
 
+@router.message(Command('help'))
+async def create_lobby(message: Message):
+    import main
+
+    await main.send_safe(chat_id=message.chat.id, text='💾Команды:\n\n/lobby - Создать лобби\n/delete_lobby - '
+                                                       'Расформировать лобби (только для лидера)')
+
+
 @router.message(Command('lobby'))
 async def create_lobby(message: Message):
     import main
