@@ -3,6 +3,7 @@ import random
 import time
 from logging import exception
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import FSInputFile
@@ -818,7 +819,7 @@ class WritersGame:
 3. Случайная тема, объект, ситуация
 4. Избегай повторений с прошлыми историями
 
-Примеры тем: сказочный герой, исследование дома, неожиданная встреча"""
+Пример: Собрались как-то в лес трое друзей, чтобы найти клад, зарытый много лет назад..."""
 
             elif self.num_sentence == self.max_sentences - 1:
                 prompt = f"""Продолжи историю (игра "Писатели").
@@ -1920,6 +1921,8 @@ async def main():
             logger.info("🌐 Запущено на сервере")
             logger.info(f"Токен бота: {bool(BOT_TOKEN)}")
             logger.info(f"AI токен: {bool(AI_TOKEN)}")
+
+            asyncio.create_task(start_health_server())
 
         dp.include_router(router)
 
