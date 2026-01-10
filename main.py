@@ -398,9 +398,18 @@ class SurvivorsGame:
                 await asyncio.sleep(0.1)
 
             except Exception as e:
+                try:
+                    print(self.strategies[player.id])
+                except:
+                    print('Ошибка в стратегии')
+                try:
+                    print(evaluated_strategies[str(player.id)][0])
+                except:
+                    print('Ошибка в истории')
+                    
                 print(str(e))
 
-                print(evaluated_strategies)
+                print(f'evaluated_strategies: {evaluated_strategies}')
                 print(str(player.id))
                 result_text = (
                     f"👤 {player.full_name}\n"
@@ -500,11 +509,11 @@ class SurvivorsGame:
                     evaluated_strategies[name] = [story, survived]
 
                 print(evaluated_strategies)
-                ptint('\n\n')
+                print('\n\n')
 
                 return evaluated_strategies
             except:
-                print(text)
+                print(f'text: {text}')
                 return f"⚠️ Ошибка обработки ответа", False
 
         except Exception as e:
