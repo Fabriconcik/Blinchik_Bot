@@ -1331,6 +1331,10 @@ class RandomCourtGame:
         self.role_turn = self.roles[self.turn[0]]
         handlers.random_court_states = "waiting_for_prosecutor"
 
+        await send_safe(chat_id=self.chat_id,
+                        text=f"🔁Раунд {self.round} из {self.max_rounds}\n\n"
+                             f"🗣️Сейчас говорит игрок <u>{self.role_turn.full_name}</u>.")
+
     async def next_turn(self):
         next_p = self.turn.popleft()
         self.turn.append(next_p)

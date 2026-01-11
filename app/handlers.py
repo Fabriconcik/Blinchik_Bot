@@ -485,7 +485,7 @@ async def receive_sentence(message: Message):
                              text=f'❗{message.from_user.first_name}, не ты выбираешь предложение')
         return
 
-    text = message.strip()
+    text = message.text.strip()
     if text[-1] != '.':
         text += '.'
     if not text[0].isupper():
