@@ -1160,9 +1160,11 @@ class EmojiBattleGame:
             verdicts = {}
             for part in parts:
                 part_player = part.split('\n')
-                player = part_player[0].replace("Игрок:", '').strip()
-                player = player.replace("игрок:", '').strip()
+                
                 player = part_player[0].replace(":", '').strip()
+                player = part_player[0].replace("Игрок", '').strip()
+                player = player.replace("игрок", '').strip()
+
                 score = part_player[1].replace(":", '').strip()
                 score = part_player[1].replace("/10", '').strip()
                 verdicts[player] = score
