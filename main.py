@@ -1622,7 +1622,7 @@ class NeuroAuctionGame:
 
         try:
             self.current_item, self.current_description = self.items[self.round - 1][0], self.items[self.round - 1][1]
-        except:
+        except IndexError:
             print('---')
             print(self.current_item)
             print(self.current_description)
