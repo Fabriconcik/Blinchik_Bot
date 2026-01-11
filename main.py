@@ -1216,10 +1216,8 @@ class EmojiBattleGame:
         import requests
 
         players_emoji = ''
-        print(self.all_emojies)
         for player in self.players:
             players_emoji += f"{player.full_name}: {self.all_emojies[player.full_name]}\n"
-        print(players_emoji)
 
         url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1622,7 +1620,15 @@ class NeuroAuctionGame:
     async def start_round(self):
         import app.handlers as handlers
 
-        self.current_item, self.current_description = self.items[self.round - 1][0], self.items[self.round - 1][1]
+        try:
+            self.current_item, self.current_description = self.items[self.round - 1][0], self.items[self.round - 1][1]
+        except:
+            print('---')
+            print(self.current_item)
+            print(self.current_description)
+            print(self.items)
+            print(self.round)
+            print('---')
 
         text = (f"🕹️Раунд {self.round} из {self.max_rounds}\n\n"
                 f"💎Предмет на аукционе: {self.current_item}\n\n"
