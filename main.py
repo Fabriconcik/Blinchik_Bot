@@ -1163,8 +1163,8 @@ class EmojiBattleGame:
                 player = part_player[0].replace("Игрок:", '').strip()
                 player = player.replace("игрок:", '').strip()
                 player = part_player[0].replace(":", '').strip()
-                score = part_player[1].replace("/10", '').strip()
                 score = part_player[1].replace(":", '').strip()
+                score = part_player[1].replace("/10", '').strip()
                 verdicts[player] = score
             return verdicts
 
