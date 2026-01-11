@@ -400,13 +400,14 @@ class SurvivorsGame:
             except Exception as e:
                 try:
                     print(self.strategies[player.id])
-                except:
+                except Exception:
                     print('Ошибка в стратегии')
+
                 try:
                     print(evaluated_strategies[str(player.id)][0])
-                except:
+                except Exception:
                     print('Ошибка в истории')
-                    
+
                 print(str(e))
 
                 print(f'evaluated_strategies: {evaluated_strategies}')
@@ -482,7 +483,7 @@ class SurvivorsGame:
                             "может случайно споткнуться или наступить на что-то. Игрок может допускать небольшие ошибки в "
                             "стратегии. Если игрок нарушает правила, выдавая себе невозможные способности, придумай реалистичное "
                             "развитие событий. Учитывай, что фантастические предметы игрок может использовать (в пределах "
-                            "разумного), если указал более-менее реалистичный способ их создания/приобретения. Не выделяй текст, учитывай регистр.\n"
+                            "разумного), если указал более-менее реалистичный способ их создания/приобретения. Не выделяй текст, учитывай регистр, не используй имена игроков.\n"
                             f"Тема раунда: {self.current_theme}\n, стратегии игроков: {strategies}\n"
                             "ОБЯЗАТЕЛЬНО! Формат:\nИгрок: [Имя_игрока]\nИстория: [текст]\nВердикт: [Выжил/Погиб]\n---\n")
                     }
@@ -492,8 +493,6 @@ class SurvivorsGame:
             response = requests.post(url, headers=headers, json=data)
             data = response.json()
             text = data['choices'][0]['message']['content']
-            print(text)
-            print('\n\n')
 
             try:
                 parts = text.split("\n---\n")
@@ -508,11 +507,9 @@ class SurvivorsGame:
                     survived = True if 'выжил' in survived.lower() else False
                     evaluated_strategies[name] = [story, survived]
 
-                print(evaluated_strategies)
-                print('\n\n')
-
                 return evaluated_strategies
             except:
+                print('\n\n')
                 print(f'text: {text}')
                 return f"⚠️ Ошибка обработки ответа", False
 
@@ -1126,10 +1123,10 @@ class EmojiBattleGame:
             "messages": [
                 {
                     "role": "user",
-                    "content": f"""Оцени наборы эмодзи для темы: {self.thematic}
+                    "content": f"""Оцени наборы эмодзи для темы (от 1 до 10): {self.thematic}
 
-Критерии (1-10):
-1. Соответствие теме
+Критерии:
+1. Соответствие теме (самый главный пункт, при его отсутствии следующие пункты оценивай сильно ниже)
 2. Креативность
 3. Логичность последовательности
 4. Никак не выделяй текст!
@@ -1241,7 +1238,7 @@ class EmojiBattleGame:
 {players_emoji}
 
 Правила:
-1. Победитель сражается с остальными (если один)
+1. Победитель сражается с выдуманным врагом/ами (если один)
 2. Если победителей много - они в команде
 3. Если все победили - против вымышленного врага
 4. Используй только указанные эмодзи
@@ -1765,7 +1762,8 @@ class NeuroAuctionGame:
 Формат для каждого:
 Название: [название]
 Описание: [текст]
----"""
+---
+"""
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
@@ -1795,6 +1793,8 @@ class NeuroAuctionGame:
                 part_message = part.split("\n")
                 self.items.append([part_message[0].replace("Название: ", '').strip(),
                                    part_message[1].replace("Описание: ", '').strip()])
+
+                print(self.items)
             return 0
 
         except Exception as e:
