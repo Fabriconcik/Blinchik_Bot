@@ -1217,6 +1217,7 @@ class EmojiBattleGame:
         players_emoji = ''
         for player in self.players:
             players_emoji += f"{player.full_name}: {self.emojies[player.full_name]}\n"
+        print(players_emoji)
 
         url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
 
