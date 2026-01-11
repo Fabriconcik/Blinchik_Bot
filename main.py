@@ -1769,7 +1769,7 @@ class NeuroAuctionGame:
                 f"предметов, которые будут интересными и необычными. Предметы должны быть связаны с чем-то "
                 f"конкретным, например «Амулет, защищающий от понедельников» или «Невидимый кактус». Не пиши своих "
                 f"рассуждений ни в каком виде и не выделяй текст! Твой ответ должен выглядеть так:\nНазвание: [название_"
-                f"предмета]\nОписание: [описание]\n---\n"
+                f"предмета]\nОписание: [описание]\n---\nНазвание: [название_предмета]\nОписание: [описание]\n---\n"
             )
 
             url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
@@ -1800,6 +1800,8 @@ class NeuroAuctionGame:
                 part_message = part.split("\n")
                 self.items.append([part_message[0].replace("Название: ", '').strip(),
                                    part_message[1].replace("Описание: ", '').strip()])
+            print(text)
+            print(self.items)
             return 0
 
         except Exception as e:
