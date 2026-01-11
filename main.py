@@ -1577,7 +1577,7 @@ class NeuroAuctionGame:
         self.balance = {player.full_name: 1000 for player in players}
         self.bet = ['', 0]
         self.round = 1
-        self.max_rounds = 3
+        self.max_rounds = len(self.players) + 2
         self.gift_msg_id = 0
         self.can_get_neuro = True
         self.can_send_neuro = True
@@ -1605,7 +1605,7 @@ class NeuroAuctionGame:
                 f"💰Каждый игрок начинает с 1000 нейро-рублей.\n\n"
                 f"💎В каждом раунде будет выставлен один предмет на аукцион.\n\n"
                 f"⏱️У вас есть 30 секунд, чтобы сделать ставку на предмет.\n\n"
-                f"🏆После 5 раундов будет выбрана лучшая коллекция. Удачи!")
+                f"🏆После {self.max_rounds} раундов будет выбрана лучшая коллекция. Удачи!")
 
         await send_safe(chat_id=self.chat_id,
                         text=text)
@@ -1865,6 +1865,8 @@ class NeuroAuctionGame:
             items = ', '.join([
                 f"{player.full_name}: {', '.join([item[0] + " " + item[1] for item in self.player_items[player.full_name]])}"
                 for player in self.players])
+            print(items)
+            print('\n\n')
 
 
 #             prompt = f"""Оцени коллекции аукциона и выбери победителя.
@@ -1918,7 +1920,11 @@ class NeuroAuctionGame:
             answer = data['choices'][0]['message']['content']
             # text = answer.split('/think\n')[1]
             text = answer
+            print(text)
+            print('\n\n')
             parts = text.split('\n\n---\n\n')
+            print(parts)
+            print('\n\n')
 
             return parts[0], parts[1], parts[2]
 
