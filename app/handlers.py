@@ -618,7 +618,7 @@ async def waiting_for_prosecutor(message: Message):
         await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
-    main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
+    main.random_court_game.answers.append(f"{message.from_user.full_name} (Прокурор) сказал {message.text}")
     random_court_states = "waiting_for_defendant"
     await main.random_court_game.next_turn()
 
@@ -634,7 +634,7 @@ async def waiting_for_defendant(message: Message):
         await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
-    main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
+    main.random_court_game.answers.append(f"{message.from_user.full_name} (Подсудимый) сказал {message.text}")
     random_court_states = "waiting_for_lawyer"
     await main.random_court_game.next_turn()
     if main.random_court_game.round == main.random_court_game.max_rounds:
@@ -656,7 +656,7 @@ async def waiting_for_lawyer(message: Message):
         await main.send_safe(chat_id=message.chat.id, text=f'❗{message.from_user.first_name}, сейчас не твой ход')
         return
 
-    main.random_court_game.answers.append(f"{message.from_user.full_name} сказал {message.text}")
+    main.random_court_game.answers.append(f"{message.from_user.full_name} (Адвокат) сказал {message.text}")
     random_court_states = "waiting_for_prosecutor"
     await main.random_court_game.next_turn()
 
@@ -755,9 +755,7 @@ async def start_func(message: Message):
             elif survivors_states == "waiting_for_strategies":
                 await receive_strategy(message)
         elif game == 'True or Fake':
-            if true_or_fake_states == "waiting_for_choice":
-                await receive_choice(message)
-            elif true_or_fake_states == "waiting_for_thematic":
+            if true_or_fake_states == "waiting_for_thematic":
                 await receive_thematic(message)
         elif game == 'Writers':
             if writers_states == "waiting_for_sentence":
