@@ -501,6 +501,7 @@ class SurvivorsGame:
                 for part in parts:
                     part_player = part.split('\n')
                     name = part_player[0].replace('Игрок:', '').strip()
+                    name = part_player[0].replace('игрок:', '').strip()
                     story = part_player[1].replace('История:', '').strip()
                     story = story.replace('история:', '').strip()
                     survived = part_player[2].replace('Вердикт:', '').strip()
@@ -1161,7 +1162,9 @@ class EmojiBattleGame:
                 part_player = part.split('\n')
                 player = part_player[0].replace("Игрок:", '').strip()
                 player = player.replace("игрок:", '').strip()
+                player = part_player[0].replace(":", '').strip()
                 score = part_player[1].replace("/10", '').strip()
+                score = part_player[1].replace(":", '').strip()
                 verdicts[player] = score
             return verdicts
 
