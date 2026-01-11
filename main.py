@@ -1071,9 +1071,10 @@ class EmojiBattleGame:
             try:
                 verdict = verdicts[player.full_name]
             except Exception as e:
-                print(str(e))
+                print(f'Ошибка поиска игрока: {str(e)}\n')
                 print(verdicts)
                 print(player.full_name)
+                print(type(player.full_name))
                 await send_safe(chat_id=self.chat_id,
                                 text=f"⚠️ Ошибка при оценивании {player.full_name}, оценка будет выставлена случайно")
                 verdict = str(random.randint(1, 10))
@@ -1215,8 +1216,9 @@ class EmojiBattleGame:
         import requests
 
         players_emoji = ''
+        print(self.all_emojies)
         for player in self.players:
-            players_emoji += f"{player.full_name}: {self.emojies[player.full_name]}\n"
+            players_emoji += f"{player.full_name}: {self.all_emojies[player.full_name]}\n"
         print(players_emoji)
 
         url = "https://api.intelligence.io.solutions/api/v1/chat/completions"
