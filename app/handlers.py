@@ -485,7 +485,13 @@ async def receive_sentence(message: Message):
                              text=f'❗{message.from_user.first_name}, не ты выбираешь предложение')
         return
 
-    main.writers_game.last_sentence = message.text
+    text = message.strip()
+    if text[-1] != '.':
+        text += '.'
+    if not text[0].isupper():
+        text = text[0].upper() + text[1:]
+
+    main.writers_game.last_sentence = text
     await main.writers_game.clear_last_sentence()
     writers_states = None
     try:
